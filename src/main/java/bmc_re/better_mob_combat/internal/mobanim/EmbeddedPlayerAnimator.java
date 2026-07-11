@@ -292,6 +292,43 @@ public final class EmbeddedPlayerAnimator {
         }
     }
 
+    /**
+     * Final EMF Vindicator pass. Fresh Animations updates its hierarchy after setupAnim, so the
+     * normal model application can be overwritten. Reapply only arm channels immediately before
+     * rendering; never touch the body, head or legs.
+     */
+    /**
+     * Compatibility entry point used by the current IllagerModelMixin. This final render pass is
+     * intentionally limited to the two arm channels so Fresh Animations keeps control of the
+     * Vindicator's body, head and legs. Player Animator safely ignores absent arm keyframes.
+     */
+    public static void applyArmsOnlyToModel(
+            IllagerModelAccess model,
+            @Nullable AnimationApplier animation
+    ) {
+        if (animation == null || !animation.isActive()) {
+            return;
+        }
+        animation.updatePart("leftArm", model.bmc$getLeftArm());
+        animation.updatePart("rightArm", model.bmc$getRightArm());
+    }
+
+    public static void applyAttackArmsOnly(
+            IllagerModelAccess model,
+            @Nullable AnimationApplier animation,
+            EnumSet<AnimatedPart> animatedParts
+    ) {
+        if (animation == null || !animation.isActive()) {
+            return;
+        }
+        if (animatedParts.contains(AnimatedPart.LEFT_ARM)) {
+            animation.updatePart("leftArm", model.bmc$getLeftArm());
+        }
+        if (animatedParts.contains(AnimatedPart.RIGHT_ARM)) {
+            animation.updatePart("rightArm", model.bmc$getRightArm());
+        }
+    }
+
     private static void resetBends(HumanoidModelAccess model) {
         IBendHelper.INSTANCE.bend(model.bmc$getBody(), null);
         IBendHelper.INSTANCE.bend(model.bmc$getLeftArm(), null);

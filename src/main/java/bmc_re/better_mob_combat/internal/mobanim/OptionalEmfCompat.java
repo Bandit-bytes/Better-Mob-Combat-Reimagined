@@ -51,30 +51,6 @@ public final class OptionalEmfCompat {
     private OptionalEmfCompat() {
     }
 
-    private static int bmc$tickCount;
-    private static int bmc$notAnimatedCount;
-    private static int bmc$noAnimatedPartsCount;
-    private static int bmc$noModelPartsCount;
-    private static int bmc$noEntityWrapperCount;
-    private static int bmc$pausedCount;
-
-    private static void bmc$maybeLogTally() {
-        bmc$tickCount++;
-        if (bmc$tickCount % 40 != 0) {
-            return;
-        }
-        BetterMobCombatReimagined.LOGGER.warn(
-                "[BMC-EMF-TALLY] last {} calls: paused={}, notAnimated={}, noAnimatedParts={}, "
-                        + "noModelParts={}, noEntityWrapper={}",
-                bmc$tickCount,
-                bmc$pausedCount,
-                bmc$notAnimatedCount,
-                bmc$noAnimatedPartsCount,
-                bmc$noModelPartsCount,
-                bmc$noEntityWrapperCount
-        );
-    }
-
     public static void pause(LivingEntity entity, EntityModel<?> model) {
         if (!EmbeddedPlayerAnimator.isAnimating(entity) || !initialize()) {
             return;
@@ -90,20 +66,25 @@ public final class OptionalEmfCompat {
             restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
 
             if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
-                if (entity.getType() == EntityType.VINDICATOR) {
-                    bmc$notAnimatedCount++;
-                    bmc$maybeLogTally();
-                }
                 return;
             }
 
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animatedParts =
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
-            if (animatedParts.isEmpty()) {
-                if (entity.getType() == EntityType.VINDICATOR) {
-                    bmc$noAnimatedPartsCount++;
-                    bmc$maybeLogTally();
+
+            // Reflection over Player Animator's layer tree can occasionally see a transition frame
+            // with no enabled body-part entries. During a synchronized Vindicator attack we still
+            // know exactly which weapon arm must remain controlled, so keep that arm in the set
+            // rather than dropping the EMF pause/reapply pass for one render.
+            if (entity.getType() == EntityType.VINDICATOR
+                    && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+                if (entity instanceof net.minecraft.world.entity.Mob mob && mob.isLeftHanded()) {
+                    animatedParts.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+                } else {
+                    animatedParts.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
                 }
+            }
+            if (animatedParts.isEmpty()) {
                 return;
             }
 
@@ -116,29 +97,31 @@ public final class OptionalEmfCompat {
             }
 
             if (modelParts.isEmpty()) {
-                if (entity.getType() == EntityType.VINDICATOR) {
-                    bmc$noModelPartsCount++;
-                    bmc$maybeLogTally();
-                }
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
             Object emfEntity = emfEntityOf.invoke(null, entity);
             if (emfEntity == null) {
-                if (entity.getType() == EntityType.VINDICATOR) {
-                    bmc$noEntityWrapperCount++;
-                    bmc$maybeLogTally();
-                }
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
             pauseAnimations.invoke(null, emfEntity, (Object) modelParts.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
-            if (entity.getType() == EntityType.VINDICATOR) {
-                bmc$pausedCount++;
-                bmc$maybeLogTally();
+
+            // EMF/Fresh Animations performs its custom hierarchy update after IllagerModel.setupAnim.
+            // Reapply only the live attack arms at the final pre-render point so EMF cannot overwrite
+            // the Better Combat swing. Legs, torso, head and normal Fresh Animations movement remain
+            // untouched.
+            if (entity.getType() == EntityType.VINDICATOR
+                    && EmbeddedPlayerAnimator.isAttackAnimating(entity)
+                    && model instanceof IllagerModelAccess illager) {
+                EmbeddedPlayerAnimator.applyAttackArmsOnly(
+                        illager,
+                        EmbeddedPlayerAnimator.getAnimation(entity),
+                        animatedParts
+                );
             }
         } catch (ReflectiveOperationException | RuntimeException exception) {
             try {
@@ -201,17 +184,11 @@ public final class OptionalEmfCompat {
             return List.of();
         }
 
-        int before = partsToPause.size();
         if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
             addIfPresent(root, "left_arm#EMF_left_arm", partsToPause);
         }
         if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
             addIfPresent(root, "right_arm#EMF_right_arm", partsToPause);
-        }
-        if (partsToPause.size() == before) {
-            debugOnce("Vindicator EMF arm bones 'left_arm#EMF_left_arm'/'right_arm#EMF_right_arm' "
-                    + "not found on this model - this Fresh Animations pack likely uses different "
-                    + "bone names, so its custom arm bones are never paused");
         }
         return List.of();
     }
@@ -361,10 +338,8 @@ public final class OptionalEmfCompat {
             resumeAnimations = findStatic(api, "resumeAllCustomAnimationsForEntity", 1);
             getEmfRootModel = emfModelInterface.getMethod("emf$getEMFRootModel");
             available = true;
-            debugOnce("EMF reflection bridge initialized successfully against " + EMF_API);
         } catch (ClassNotFoundException ignored) {
             available = false;
-            debugOnce("EMF/Fresh Animations not present - bridge disabled");
         } catch (ReflectiveOperationException exception) {
             available = false;
             warnOnce("Entity Model Features was found, but its 1.21.1 animation API was not compatible", exception);
@@ -397,16 +372,6 @@ public final class OptionalEmfCompat {
         if (!warned) {
             warned = true;
             BetterMobCombatReimagined.LOGGER.warn(message, throwable);
-        }
-    }
-
-    // Temporary diagnostic aid: logs each distinct message once so we can see exactly where the
-    // EMF/Fresh Animations bridge stops working without flooding the log every render frame.
-    private static final Set<String> DEBUG_LOGGED = new HashSet<>();
-
-    private static void debugOnce(String message) {
-        if (DEBUG_LOGGED.add(message)) {
-            BetterMobCombatReimagined.LOGGER.warn("[BMC-EMF-DEBUG] {}", message);
         }
     }
 

@@ -33,7 +33,7 @@ public abstract class ItemInHandLayerMixin_VindicatorRenderer
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/monster/Vindicator;isAggressive()Z")
     )
     private boolean bmc$forceAggressiveWhileAttacking(Vindicator instance, Operation<Boolean> original) {
-        if (((MobAnimationAccess) instance).bmc$isAttackAnimationActive()) {
+        if (((MobAnimationAccess) instance).bmc$shouldForceAttackItemVisible()) {
             return true;
         }
         return original.call(instance);

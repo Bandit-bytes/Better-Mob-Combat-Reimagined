@@ -64,7 +64,12 @@ public final class MobCombatMath {
     public static float adjustedUpswing(AttackHand hand) {
         double rawUpswing = Mth.clamp(hand.attack().upswing(), 0.0D, 1.0D);
         double additional = rawUpswing * BMCConfig.ADDITIONAL_UPSWING_MULTIPLIER.get();
-        return (float) Mth.clamp(hand.upswingRate() + additional, 0.2D, 1.0D);
+        double configured = hand.upswingRate() + additional;
+        // Never resolve server damage before the animation's authored impact fraction. Current
+        // Better Combat may expose a lower hand upswing rate (for example 0.20 for an axe whose
+        // animation impact is authored at 0.30), which otherwise makes the player take damage
+        // several frames before the visible weapon arrives.
+        return (float) Mth.clamp(Math.max(rawUpswing, configured), 0.2D, 1.0D);
     }
 
     public static float totalUpswingMultiplier(AttackHand hand) {

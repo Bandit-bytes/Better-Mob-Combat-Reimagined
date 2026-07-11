@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.FirstPersonTracker;
 import bmc_re.better_mob_combat.internal.mobanim.HumanoidBodyPose;
 import bmc_re.better_mob_combat.internal.mobanim.IllagerModelAccess;
+import bmc_re.better_mob_combat.internal.mobanim.OptionalEmfCompat;
 import com.llamalad7.mixinextras.injector.WrapWithCondition;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -144,7 +145,14 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float headPitch,
             CallbackInfo ci
     ) {
-        EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
+        if (OptionalEmfCompat.isAnimatedEmfVindicator(entity, (EntityModel<?>) (Object) this)) {
+            EmbeddedPlayerAnimator.applyArmsOnlyToModel(
+                    this,
+                    EmbeddedPlayerAnimator.getAnimation(entity)
+            );
+        } else {
+            EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
+        }
     }
 
     /**

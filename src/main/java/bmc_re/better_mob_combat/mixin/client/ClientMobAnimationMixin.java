@@ -87,6 +87,10 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private float bmc$renderPartialTick;
 
+    /** Exact client render lifetime for the current attack, independent of Player Animator fade state. */
+    @Unique
+    private int bmc$attackVisualTicks;
+
     protected ClientMobAnimationMixin(EntityType<? extends LivingEntity> type, Level level) {
         super(type, level);
     }
@@ -106,6 +110,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     private void bmc$tickMobAnimationStack(CallbackInfo ci) {
         if (this.level().isClientSide) {
             this.bmc$animationStack.tick();
+            if (this.bmc$attackVisualTicks > 0) {
+                this.bmc$attackVisualTicks--;
+            }
         }
     }
 
@@ -158,16 +165,20 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Override
     public boolean bmc$isAttackAnimationActive() {
-        // Query the real animation player's own state instead of a hand-maintained tick counter.
-        // A counter computed once from the intended length can drift out of sync with how the
-        // animation actually plays once TransmissionSpeedModifier gears and fade-in easing are
-        // involved - if it reaches zero even slightly before the real animation finishes, every
-        // WrapWithCondition/ModifyVariable gated on this flips back to idle behavior mid-swing,
-        // which shows up as the swing visibly cutting off partway through and snapping back to
-        // the idle weapon-hold pose. This mirrors the original 1.20.1 mod's
-        // bettermobcombat$hasActiveAttackAnimation(), which checks the same way.
-        return this.bmc$attackAnimation.base.getAnimation() != null
-                && this.bmc$attackAnimation.base.getAnimation().isActive();
+        // Use the synchronized packet lifetime as the authoritative render gate. Player Animator's
+        // isActive() can briefly report false while a replacement/fade modifier changes state,
+        // which caused EMF Vindicators to randomly lose an individual swing frame.
+        return this.bmc$attackVisualTicks > 0
+                && this.bmc$attackAnimation.base.getAnimation() != null;
+    }
+
+    @Override
+    public boolean bmc$shouldForceAttackItemVisible() {
+        // Conditional illager item layers should release slightly before the final fade frames.
+        // Fresh Animations can return to crossed arms at the tail of the swing; keeping the item
+        // forced for those final frames leaves the axe floating outside the closed hands.
+        return this.bmc$attackVisualTicks > 2
+                && this.bmc$attackAnimation.base.getAnimation() != null;
     }
 
     @Override
@@ -206,6 +217,10 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             copy.head.pitch.setEnabled(false);
 
             float safeLength = Math.max(1.0F, length);
+            // Use the packet's authored total duration for renderer visibility. The animation
+            // modifier may remain active briefly while fading out; that must not keep the axe
+            // rendered after the Vindicator has already returned to crossed arms.
+            this.bmc$attackVisualTicks = Math.max(1, Mth.ceil(safeLength) + 1);
             float sourceUpswing = Mth.clamp(animationUpswing, 0.01F, 0.99F);
             float targetUpswing = Mth.clamp(damageUpswing, 0.01F, 0.99F);
 

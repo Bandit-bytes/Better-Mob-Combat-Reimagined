@@ -15,6 +15,9 @@ public interface MobAnimationAccess {
 
     boolean bmc$isAttackAnimationActive();
 
+    /** Shorter visual window used only by conditional illager held-item layers. */
+    boolean bmc$shouldForceAttackItemVisible();
+
     void bmc$playAttackAnimation(
             String animationId,
             boolean offHand,
