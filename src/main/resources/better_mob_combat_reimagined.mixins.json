@@ -4,6 +4,7 @@
   "package": "bmc_re.better_mob_combat.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "LivingEntityAttackStrengthAccessor",
     "LivingEntitySwingMixin",
     "LivingEntityWeaponMixin",
     "MeleeAttackGoalMixin",

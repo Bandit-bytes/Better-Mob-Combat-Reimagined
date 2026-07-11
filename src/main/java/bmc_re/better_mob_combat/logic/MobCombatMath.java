@@ -1,6 +1,7 @@
 package bmc_re.better_mob_combat.logic;
 
 import bmc_re.better_mob_combat.config.BMCConfig;
+import net.bettercombat.BetterCombatMod;
 import net.bettercombat.api.AttackHand;
 import net.bettercombat.api.WeaponAttributes;
 import net.minecraft.core.Holder;
@@ -28,7 +29,16 @@ public final class MobCombatMath {
             attackSpeed = itemAttackSpeed(hand.itemStack(), EquipmentSlot.MAINHAND);
         }
         double exactDuration = 20.0D / Math.max(0.1D, attackSpeed);
-        return (float) Math.max(BMCConfig.MINIMUM_ATTACK_INTERVAL.get(), exactDuration);
+        double minimum = BMCConfig.MINIMUM_ATTACK_INTERVAL.get();
+
+        // When Better Combat fast attacks are disabled, Minecraft keeps a hurt target invulnerable
+        // for 10 ticks. Starting another visible combo swing sooner guarantees an apparent contact
+        // with no damage. Respect that window instead of playing attacks vanilla will reject.
+        if (BetterCombatMod.getConfig() == null || !BetterCombatMod.getConfig().allow_fast_attacks) {
+            minimum = Math.max(minimum, 10.0D);
+        }
+
+        return (float) Math.max(minimum, exactDuration);
     }
 
     /** Match the original mod's rounded whole-tick weapon cooldown. */

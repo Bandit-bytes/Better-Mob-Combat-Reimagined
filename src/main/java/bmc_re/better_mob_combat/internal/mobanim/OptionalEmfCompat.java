@@ -9,6 +9,7 @@ import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -26,17 +27,19 @@ import java.util.UUID;
 /**
  * Optional Entity Model Features/Fresh Animations bridge.
  *
- * <p>EMF is never disabled and the entity is never forced onto its vanilla model. This follows
- * Mob Player Animator's compatibility path: pause only the EMF parts whose Player Animator
- * channels are active, temporarily adapt Fresh Animations' custom Vindicator hierarchy, render,
- * then restore every changed model value immediately.</p>
+ * <p>This is the useful part of the original Mob Player Animator EMF integration adapted to the
+ * Reimagined single-mod architecture. EMF remains enabled. Immediately before the base model is
+ * drawn, this class snapshots every custom part it changes, exposes Fresh Animations' individual
+ * attack arm, hides its crossed-arm node, pauses only the bones controlled by Player Animator and
+ * reapplies the live arm keyframes. Immediately after the draw, EMF and every saved model value are
+ * restored.</p>
  */
 public final class OptionalEmfCompat {
     private static final String EMF_API = "traben.entity_model_features.EMFAnimationApi";
     private static final String EMF_MODEL_INTERFACE = "traben.entity_model_features.models.IEMFModel";
 
     private static final Set<UUID> PAUSED = new HashSet<>();
-    private static final Map<UUID, List<PartState>> MODIFIED_PARTS = new HashMap<>();
+    private static final Map<UUID, List<PartState>> SAVED_PARTS = new HashMap<>();
 
     private static boolean initialized;
     private static boolean available;
@@ -57,70 +60,64 @@ public final class OptionalEmfCompat {
         }
 
         UUID uuid = entity.getUUID();
-
         try {
-            // A renderer should always call resume. If a render was interrupted, explicitly resume
-            // EMF before discarding our bookkeeping; simply forgetting PAUSED would leave custom
-            // animation channels frozen on the entity.
+            // Recover safely if another renderer aborted between our BEFORE and AFTER injections.
             resumeIfPaused(entity, uuid);
-            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+            restoreSavedParts(SAVED_PARTS.remove(uuid));
 
             if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
                 return;
             }
 
-            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animatedParts =
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
 
-            // Reflection over Player Animator's layer tree can occasionally see a transition frame
-            // with no enabled body-part entries. During a synchronized Vindicator attack we still
-            // know exactly which weapon arm must remain controlled, so keep that arm in the set
-            // rather than dropping the EMF pause/reapply pass for one render.
+            // Layer-tree inspection can briefly report no enabled channels during a transition.
+            // The synchronized attack state still tells us which weapon arm must remain controlled.
             if (entity.getType() == EntityType.VINDICATOR
                     && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
-                if (entity instanceof net.minecraft.world.entity.Mob mob && mob.isLeftHanded()) {
-                    animatedParts.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+                if (entity instanceof Mob mob && mob.isLeftHanded()) {
+                    animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
                 } else {
-                    animatedParts.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+                    animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
                 }
             }
-            if (animatedParts.isEmpty()) {
+            if (animated.isEmpty()) {
                 return;
             }
 
-            Set<ModelPart> modelParts = Collections.newSetFromMap(new IdentityHashMap<>());
-            collectControlledParts(model, animatedParts, modelParts);
+            Set<ModelPart> partsToPause = Collections.newSetFromMap(new IdentityHashMap<>());
+            collectControlledParts(model, animated, partsToPause);
 
-            List<PartState> modified = applyEmfModelModifiers(entity, model, animatedParts, modelParts);
-            if (!modified.isEmpty()) {
-                MODIFIED_PARTS.put(uuid, modified);
+            List<PartState> saved = applyFreshAnimationsVindicatorMapping(entity, model, animated, partsToPause);
+            if (!saved.isEmpty()) {
+                SAVED_PARTS.put(uuid, saved);
             }
 
-            if (modelParts.isEmpty()) {
-                restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+            if (partsToPause.isEmpty()) {
+                restoreSavedParts(SAVED_PARTS.remove(uuid));
                 return;
             }
 
             Object emfEntity = emfEntityOf.invoke(null, entity);
             if (emfEntity == null) {
-                restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+                restoreSavedParts(SAVED_PARTS.remove(uuid));
                 return;
             }
 
-            pauseAnimations.invoke(null, emfEntity, (Object) modelParts.toArray(ModelPart[]::new));
+            pauseAnimations.invoke(null, emfEntity, (Object) partsToPause.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
 
-            // EMF/Fresh Animations performs its custom hierarchy update after IllagerModel.setupAnim.
-            // Reapply only the live attack arms at the final pre-render point so EMF cannot overwrite
-            // the Better Combat swing. Legs, torso, head and normal Fresh Animations movement remain
-            // untouched.
+            // Fresh Animations performs custom hierarchy updates after vanilla setupAnim. Reapply
+            // only the attack arms at the last possible point. Body, head and legs remain entirely
+            // controlled by Fresh Animations.
             if (entity.getType() == EntityType.VINDICATOR
                     && EmbeddedPlayerAnimator.isAttackAnimating(entity)
                     && model instanceof IllagerModelAccess illager) {
                 EmbeddedPlayerAnimator.applyAttackArmsOnly(
                         illager,
                         EmbeddedPlayerAnimator.getAnimation(entity),
-                        animatedParts
+                        animated
                 );
             }
         } catch (ReflectiveOperationException | RuntimeException exception) {
@@ -129,7 +126,7 @@ public final class OptionalEmfCompat {
             } catch (ReflectiveOperationException | RuntimeException resumeException) {
                 exception.addSuppressed(resumeException);
             }
-            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+            restoreSavedParts(SAVED_PARTS.remove(uuid));
             warnOnce("Failed to coordinate Fresh Animations/EMF with a mob attack animation", exception);
         }
     }
@@ -145,10 +142,9 @@ public final class OptionalEmfCompat {
         } catch (ReflectiveOperationException | RuntimeException exception) {
             warnOnce("Failed to resume Fresh Animations/EMF after an animated mob render", exception);
         } finally {
-            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+            restoreSavedParts(SAVED_PARTS.remove(uuid));
         }
     }
-
 
     private static void resumeIfPaused(LivingEntity entity, UUID uuid) throws ReflectiveOperationException {
         if (!PAUSED.remove(uuid)) {
@@ -161,13 +157,13 @@ public final class OptionalEmfCompat {
     }
 
     /**
-     * Fresh Animations renders the visible illager arm as a child of the vanilla arm anchor.
-     * Pause that visible child while Better Mob Combat rotates the parent. The held-item layer
-     * already uses the parent anchor, so the arm and axe now receive one shared transform.
+     * Fresh Animations' Vindicator uses hidden individual arms plus a visible crossed-arm hierarchy.
+     * Player Animator and Minecraft's held-item layer both target the individual vanilla arm anchor.
+     * During an authored arm swing, expose that exact arm and hide only the crossed-arm node.
      *
-     * <p>No legs, torso positions, crossed-arm visibility, or body movement are changed here.</p>
+     * <p>No leg offsets, torso offsets, model locking or global EMF disabling are used.</p>
      */
-    private static List<PartState> applyEmfModelModifiers(
+    private static List<PartState> applyFreshAnimationsVindicatorMapping(
             LivingEntity entity,
             EntityModel<?> model,
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated,
@@ -184,13 +180,31 @@ public final class OptionalEmfCompat {
             return List.of();
         }
 
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
+        List<PartState> saved = new ArrayList<>();
+        boolean left = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+        boolean right = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+
+        if (left) {
+            setVisible(root, "left_arm", true, saved);
             addIfPresent(root, "left_arm#EMF_left_arm", partsToPause);
         }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+        if (right) {
+            setVisible(root, "right_arm", true, saved);
             addIfPresent(root, "right_arm#EMF_right_arm", partsToPause);
         }
-        return List.of();
+        if (left || right) {
+            setVisible(root, "body#EMF_body#EMF_arms_rotation", false, saved);
+        }
+
+        return saved;
+    }
+
+    private static void setVisible(ModelPart root, String path, boolean visible, List<PartState> saved) {
+        ModelPart part = findPart(root, path);
+        if (part != null && part.visible != visible) {
+            saveOnce(part, saved);
+            part.visible = visible;
+        }
     }
 
     private static void addIfPresent(ModelPart root, String path, Set<ModelPart> partsToPause) {
@@ -198,6 +212,15 @@ public final class OptionalEmfCompat {
         if (part != null) {
             partsToPause.add(part);
         }
+    }
+
+    private static void saveOnce(ModelPart part, List<PartState> saved) {
+        for (PartState state : saved) {
+            if (state.part() == part) {
+                return;
+            }
+        }
+        saved.add(PartState.capture(part));
     }
 
     public static boolean isAnimatedEmfVindicator(LivingEntity entity, EntityModel<?> model) {
@@ -226,16 +249,12 @@ public final class OptionalEmfCompat {
         return current;
     }
 
-    private static void restoreModifiedParts(List<PartState> states) {
+    private static void restoreSavedParts(List<PartState> states) {
         if (states == null) {
             return;
         }
         for (PartState state : states) {
-            state.part().y = state.y();
-            state.part().xRot = state.xRot();
-            state.part().yRot = state.yRot();
-            state.part().zRot = state.zRot();
-            state.part().visible = state.visible();
+            state.restore();
         }
     }
 
@@ -246,21 +265,11 @@ public final class OptionalEmfCompat {
     ) {
         if (model instanceof PlayerModel<?> player) {
             addHumanoidParts(player, animated, parts);
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
-                parts.add(player.jacket);
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
-                parts.add(player.leftSleeve);
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
-                parts.add(player.rightSleeve);
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
-                parts.add(player.leftPants);
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
-                parts.add(player.rightPants);
-            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) parts.add(player.jacket);
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) parts.add(player.leftSleeve);
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) parts.add(player.rightSleeve);
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) parts.add(player.leftPants);
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) parts.add(player.rightPants);
             return;
         }
 
@@ -277,23 +286,13 @@ public final class OptionalEmfCompat {
             if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
                 parts.add(illager.bmc$getBody());
             }
-            boolean leftArm = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-            boolean rightArm = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-            if (leftArm) {
-                parts.add(illager.bmc$getLeftArm());
-            }
-            if (rightArm) {
-                parts.add(illager.bmc$getRightArm());
-            }
-            if (leftArm || rightArm) {
-                parts.add(illager.bmc$getCrossedArms());
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
-                parts.add(illager.bmc$getLeftLeg());
-            }
-            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
-                parts.add(illager.bmc$getRightLeg());
-            }
+            boolean left = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            boolean right = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            if (left) parts.add(illager.bmc$getLeftArm());
+            if (right) parts.add(illager.bmc$getRightArm());
+            if (left || right) parts.add(illager.bmc$getCrossedArms());
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) parts.add(illager.bmc$getLeftLeg());
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) parts.add(illager.bmc$getRightLeg());
         }
     }
 
@@ -306,21 +305,11 @@ public final class OptionalEmfCompat {
             parts.add(model.head);
             parts.add(model.hat);
         }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
-            parts.add(model.body);
-        }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
-            parts.add(model.leftArm);
-        }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
-            parts.add(model.rightArm);
-        }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
-            parts.add(model.leftLeg);
-        }
-        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
-            parts.add(model.rightLeg);
-        }
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) parts.add(model.body);
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) parts.add(model.leftArm);
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) parts.add(model.rightArm);
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) parts.add(model.leftLeg);
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) parts.add(model.rightLeg);
     }
 
     private static boolean initialize() {
@@ -332,7 +321,6 @@ public final class OptionalEmfCompat {
             Class<?> api = Class.forName(EMF_API);
             emfModelInterface = Class.forName(EMF_MODEL_INTERFACE);
             isModelAnimated = findStatic(api, "isModelAnimatedByEMF", 1);
-            // EMF overloads emfEntityOf for Entity and BlockEntity. Bind the normal entity overload.
             emfEntityOf = findStatic(api, "emfEntityOf", Entity.class);
             pauseAnimations = findStatic(api, "pauseCustomAnimationsForThesePartsOfEntity", 2);
             resumeAnimations = findStatic(api, "resumeAllCustomAnimationsForEntity", 1);
@@ -342,7 +330,7 @@ public final class OptionalEmfCompat {
             available = false;
         } catch (ReflectiveOperationException exception) {
             available = false;
-            warnOnce("Entity Model Features was found, but its 1.21.1 animation API was not compatible", exception);
+            warnOnce("Entity Model Features was found, but its animation API was not compatible", exception);
         }
         return available;
     }
@@ -375,9 +363,42 @@ public final class OptionalEmfCompat {
         }
     }
 
-    private record PartState(ModelPart part, float y, float xRot, float yRot, float zRot, boolean visible) {
+    private record PartState(
+            ModelPart part,
+            float x,
+            float y,
+            float z,
+            float xRot,
+            float yRot,
+            float zRot,
+            float xScale,
+            float yScale,
+            float zScale,
+            boolean visible,
+            boolean skipDraw
+    ) {
         static PartState capture(ModelPart part) {
-            return new PartState(part, part.y, part.xRot, part.yRot, part.zRot, part.visible);
+            return new PartState(
+                    part,
+                    part.x, part.y, part.z,
+                    part.xRot, part.yRot, part.zRot,
+                    part.xScale, part.yScale, part.zScale,
+                    part.visible, part.skipDraw
+            );
+        }
+
+        void restore() {
+            part.x = x;
+            part.y = y;
+            part.z = z;
+            part.xRot = xRot;
+            part.yRot = yRot;
+            part.zRot = zRot;
+            part.xScale = xScale;
+            part.yScale = yScale;
+            part.zScale = zScale;
+            part.visible = visible;
+            part.skipDraw = skipDraw;
         }
     }
 }

@@ -28,6 +28,20 @@ public final class MobAttackCollision {
             return false;
         }
 
+        AABB targetBox = target.getBoundingBox();
+
+        // Do not create a point-blank dead zone. Better Combat's forward OBB begins at the
+        // attack origin and extends outward. When another entity is pressed into the mob's own
+        // collider, the nearest part of that entity can sit behind the OBB's forward face even
+        // though the entities are physically touching. The vanilla melee goal then repeatedly
+        // asks to attack, receives false, and appears to stop attacking altogether.
+        //
+        // This fallback is deliberately tiny and requires actual collider contact. It does not
+        // increase normal weapon reach or make attacks more forgiving at dodgeable distances.
+        if (mob.getBoundingBox().inflate(0.15D, 0.10D, 0.15D).intersects(targetBox)) {
+            return true;
+        }
+
         Vec3 origin = initialTracingPoint(mob);
         boolean spinAttack = attack.angle() > 180.0D;
         WeaponAttributes.HitBoxShape hitbox = attack.hitbox() == null
@@ -48,7 +62,6 @@ public final class MobAttackCollision {
         }
         weaponBox.updateVertex();
 
-        AABB targetBox = target.getBoundingBox();
         Vec3 targetCenter = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
         // Match the original CollisionFilter behavior: the actual target collider must intersect
         // the weapon OBB. Do not inflate by pick radius and do not accept center-only containment,

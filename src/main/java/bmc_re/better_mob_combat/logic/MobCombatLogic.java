@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobCombatState;
 import bmc_re.better_mob_combat.config.BMCConfig;
 import bmc_re.better_mob_combat.network.BMCNetwork;
+import bmc_re.better_mob_combat.mixin.LivingEntityAttackStrengthAccessor;
 import net.bettercombat.BetterCombatMod;
 import net.bettercombat.api.AttackHand;
 import net.bettercombat.api.WeaponAttributes;
@@ -296,10 +297,17 @@ public final class MobCombatLogic {
             }
         }
 
+        // Preserve the attack-strength ticker exactly as the original Better Mob Combat did.
+        // Some vanilla/enchantment attack paths mutate it while resolving a hit. Letting that
+        // mutation leak into the next combo entry can make a later visual swing deal no damage.
+        LivingEntityAttackStrengthAccessor attackStrength = (LivingEntityAttackStrengthAccessor) mob;
+        int savedAttackStrengthTicker = attackStrength.bmc$getAttackStrengthTicker();
+
         try {
             if (hand.isOffHand()) {
                 state.bmc$setWeaponOverride(hand.itemStack());
             }
+            attackStrength.bmc$setAttackStrengthTicker(savedAttackStrengthTicker);
             // Better Combat's fast-attack option bypasses LivingEntity hurt throttling. The original
             // Better Mob Combat did the same before delegating to the mob's vanilla attack method.
             if (BetterCombatMod.getConfig() != null && BetterCombatMod.getConfig().allow_fast_attacks) {
