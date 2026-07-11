@@ -1,0 +1,50 @@
+package bmc_re.better_mob_combat.client;
+
+import bmc_re.better_mob_combat.api.MobAnimationAccess;
+import bmc_re.better_mob_combat.api.RangedWeaponKind;
+import bmc_re.better_mob_combat.network.MobAttackPayload;
+import bmc_re.better_mob_combat.network.MobRangedReleasePayload;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+
+@OnlyIn(Dist.CLIENT)
+public final class ClientPayloadHandler {
+    private ClientPayloadHandler() {
+    }
+
+    public static void handleMobAttack(MobAttackPayload payload) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return;
+        }
+        Entity entity = minecraft.level.getEntity(payload.entityId());
+        if (entity instanceof MobAnimationAccess animatedMob) {
+            animatedMob.bmc$playAttackAnimation(
+                    payload.animationId(),
+                    payload.offHand(),
+                    payload.twoHanded(),
+                    payload.length(),
+                    payload.animationUpswing(),
+                    payload.damageUpswing()
+            );
+        }
+    }
+
+    public static void handleMobRangedRelease(MobRangedReleasePayload payload) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return;
+        }
+        Entity entity = minecraft.level.getEntity(payload.entityId());
+        if (entity instanceof LivingEntity livingEntity) {
+            RangedMobAnimator.triggerRelease(
+                    livingEntity,
+                    RangedWeaponKind.byId(payload.weaponKind()),
+                    payload.offHand()
+            );
+        }
+    }
+}

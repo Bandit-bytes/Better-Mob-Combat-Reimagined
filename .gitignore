@@ -1,0 +1,18 @@
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# Minecraft run directories
+run/
+runs/
+
+# Logs and crash reports
+*.log
+crash-reports/

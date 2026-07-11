@@ -1,0 +1,29 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "bmc_re.better_mob_combat.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "LivingEntitySwingMixin",
+    "LivingEntityWeaponMixin",
+    "MeleeAttackGoalMixin",
+    "MobCombatMixin"
+  ],
+  "client": [
+    "client.embedded.EntityModelMixin",
+    "client.embedded.HierarchicalModelMixin",
+    "client.embedded.HumanoidModelMixin",
+    "client.embedded.IllagerModelMixin",
+    "client.embedded.AbstractZombieModelMixin",
+    "client.embedded.SkeletonModelMixin",
+    "client.embedded.PiglinModelMixin",
+    "client.embedded.PlayerModelMixinMob",
+    "client.embedded.ZombieVillagerModelMixin",
+    "client.ClientMobAnimationMixin",
+    "client.LivingEntityRendererMixin",
+    "client.VindicatorItemInHandLayerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
