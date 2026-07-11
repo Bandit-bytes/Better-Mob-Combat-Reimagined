@@ -66,12 +66,15 @@ public final class OptionalEmfCompat {
             restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
 
             if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
+                debugOnce("EMF reports model NOT animated for " + entity.getType() + " - nothing to pause");
                 return;
             }
 
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animatedParts =
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
             if (animatedParts.isEmpty()) {
+                debugOnce("Player Animator reports no animated parts for " + entity.getType()
+                        + " - EMF pause skipped, EMF keeps full control");
                 return;
             }
 
@@ -84,16 +87,21 @@ public final class OptionalEmfCompat {
             }
 
             if (modelParts.isEmpty()) {
+                debugOnce("No matching ModelParts found to pause for " + entity.getType()
+                        + " (animated channels: " + animatedParts + ") - check EMF bone names");
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
             Object emfEntity = emfEntityOf.invoke(null, entity);
             if (emfEntity == null) {
+                debugOnce("EMF returned no entity wrapper for " + entity.getType() + " - pause skipped");
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
+            debugOnce("Pausing EMF animation on " + modelParts.size() + " parts for "
+                    + entity.getType() + " (channels: " + animatedParts + ")");
             pauseAnimations.invoke(null, emfEntity, (Object) modelParts.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
         } catch (ReflectiveOperationException | RuntimeException exception) {
@@ -157,11 +165,17 @@ public final class OptionalEmfCompat {
             return List.of();
         }
 
+        int before = partsToPause.size();
         if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
             addIfPresent(root, "left_arm#EMF_left_arm", partsToPause);
         }
         if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
             addIfPresent(root, "right_arm#EMF_right_arm", partsToPause);
+        }
+        if (partsToPause.size() == before) {
+            debugOnce("Vindicator EMF arm bones 'left_arm#EMF_left_arm'/'right_arm#EMF_right_arm' "
+                    + "not found on this model - this Fresh Animations pack likely uses different "
+                    + "bone names, so its custom arm bones are never paused");
         }
         return List.of();
     }
@@ -308,8 +322,10 @@ public final class OptionalEmfCompat {
             resumeAnimations = findStatic(api, "resumeAllCustomAnimationsForEntity", 1);
             getEmfRootModel = emfModelInterface.getMethod("emf$getEMFRootModel");
             available = true;
+            debugOnce("EMF reflection bridge initialized successfully against " + EMF_API);
         } catch (ClassNotFoundException ignored) {
             available = false;
+            debugOnce("EMF/Fresh Animations not present - bridge disabled");
         } catch (ReflectiveOperationException exception) {
             available = false;
             warnOnce("Entity Model Features was found, but its 1.21.1 animation API was not compatible", exception);
@@ -342,6 +358,16 @@ public final class OptionalEmfCompat {
         if (!warned) {
             warned = true;
             BetterMobCombatReimagined.LOGGER.warn(message, throwable);
+        }
+    }
+
+    // Temporary diagnostic aid: logs each distinct message once so we can see exactly where the
+    // EMF/Fresh Animations bridge stops working without flooding the log every render frame.
+    private static final Set<String> DEBUG_LOGGED = new HashSet<>();
+
+    private static void debugOnce(String message) {
+        if (DEBUG_LOGGED.add(message)) {
+            BetterMobCombatReimagined.LOGGER.warn("[BMC-EMF-DEBUG] {}", message);
         }
     }
 

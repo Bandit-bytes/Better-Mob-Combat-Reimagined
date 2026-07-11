@@ -209,11 +209,34 @@ public final class MobCombatLogic {
         state.bmc$setWeaponOverride(null);
     }
 
+    private static final java.util.Set<String> BMC$TIMING_LOGGED = new java.util.HashSet<>();
+
     private static void startPendingAttack(Mob mob, MobCombatState state, AttackHand hand) {
         float animationLength = MobCombatMath.attackDurationTicks(mob, hand);
         int interval = MobCombatMath.attackIntervalTicks(mob, hand);
         state.bmc$setAttackCooldown(interval + BMCConfig.ADDITIONAL_ATTACK_COOLDOWN.get());
         state.bmc$setWindupTicks(MobCombatMath.impactTick(mob, hand));
+
+        // Temporary diagnostic: log the exact timing numbers once per entity type so we can see
+        // whether a modded attack-speed attribute is compressing the swing into a near-instant hit.
+        ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
+        String key = typeId.toString();
+        if (BMC$TIMING_LOGGED.add(key)) {
+            var attackSpeedAttr = mob.getAttribute(Attributes.ATTACK_SPEED);
+            BetterMobCombatReimagined.LOGGER.warn(
+                    "[BMC-TIMING-DEBUG] {} attack: hasAttackSpeedAttribute={}, attackSpeedValue={}, "
+                            + "animationLengthTicks={}, intervalTicks={}, impactTick={}, "
+                            + "upswing={}, weapon={}",
+                    key,
+                    attackSpeedAttr != null,
+                    attackSpeedAttr != null ? mob.getAttributeValue(Attributes.ATTACK_SPEED) : "n/a",
+                    animationLength,
+                    interval,
+                    state.bmc$getWindupTicks(),
+                    MobCombatMath.animationUpswing(hand),
+                    hand.itemStack()
+            );
+        }
 
         BMCNetwork.sendAttackAnimation(
                 mob,
