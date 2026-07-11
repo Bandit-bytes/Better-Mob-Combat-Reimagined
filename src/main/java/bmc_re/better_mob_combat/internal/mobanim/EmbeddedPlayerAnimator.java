@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import dev.kosmx.playerAnim.api.TransformType;
+import dev.kosmx.playerAnim.api.layered.IAnimation;
 import dev.kosmx.playerAnim.core.impl.AnimationProcessor;
 import dev.kosmx.playerAnim.core.util.SetableSupplier;
 import dev.kosmx.playerAnim.core.util.Vec3f;
@@ -18,6 +19,15 @@ import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.LivingEntity;
 import org.jetbrains.annotations.Nullable;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.IdentityHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * The small render bridge embedded from Mob Player Animator's 1.21.1 implementation.
@@ -44,6 +54,156 @@ public final class EmbeddedPlayerAnimator {
     /** Returns true only while Better Mob Combat's high-priority attack layer is playing. */
     public static boolean isAttackAnimating(LivingEntity entity) {
         return entity instanceof MobAnimationAccess access && access.bmc$isAttackAnimationActive();
+    }
+
+    /** Vanilla body channels that may overlap with EMF/Fresh Animations. */
+    public enum AnimatedPart {
+        HEAD,
+        TORSO,
+        LEFT_ARM,
+        RIGHT_ARM,
+        LEFT_LEG,
+        RIGHT_LEG
+    }
+
+    /**
+     * Walks Player Animator's active layer tree and returns only channels enabled by the current
+     * keyframe animations. This is the same distinction Mob Player Animator uses for EMF: an idle
+     * pose that controls only the arms must not freeze the legs, and an attack without leg keys must
+     * leave Fresh Animations' walk cycle intact.
+     */
+    public static EnumSet<AnimatedPart> getCurrentlyAnimatedParts(LivingEntity entity) {
+        EnumSet<AnimatedPart> parts = EnumSet.noneOf(AnimatedPart.class);
+        if (!(entity instanceof MobAnimationAccess access)) {
+            return parts;
+        }
+
+        Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        collectAnimatedParts(access.bmc$getAnimationStack(), parts, visited);
+        return parts;
+    }
+
+    private static void collectAnimatedParts(
+            Object animation,
+            EnumSet<AnimatedPart> parts,
+            Set<Object> visited
+    ) {
+        if (animation == null || !visited.add(animation)) {
+            return;
+        }
+        if (animation instanceof IAnimation layeredAnimation && !layeredAnimation.isActive()) {
+            return;
+        }
+
+        Object bodyParts = readField(animation, "bodyParts");
+        if (bodyParts instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() instanceof String name && bodyPartEnabled(entry.getValue())) {
+                    mapAnimatedPart(name, parts);
+                }
+            }
+            return;
+        }
+
+        Object layers = readField(animation, "layers");
+        if (layers instanceof Iterable<?> iterable) {
+            for (Object layer : iterable) {
+                Object child = pairValue(layer);
+                if (child != null) {
+                    collectAnimatedParts(child, parts, visited);
+                }
+            }
+            return;
+        }
+
+        Object child = invokeNoArg(animation, "getAnimation");
+        if (child == null) {
+            child = invokeNoArg(animation, "getAnim");
+        }
+        if (child == null) {
+            child = readField(animation, "animation");
+        }
+        if (child == null) {
+            child = readField(animation, "anim");
+        }
+        if (child != null && child != animation) {
+            collectAnimatedParts(child, parts, visited);
+        }
+    }
+
+    private static boolean bodyPartEnabled(Object bodyPart) {
+        if (bodyPart == null) {
+            return false;
+        }
+        Object state = readField(bodyPart, "part");
+        if (state == null) {
+            state = invokeNoArg(bodyPart, "part");
+        }
+        Object enabled = state == null ? null : invokeNoArg(state, "isEnabled");
+        return Boolean.TRUE.equals(enabled);
+    }
+
+    private static void mapAnimatedPart(String name, EnumSet<AnimatedPart> parts) {
+        String normalized = name.replace("_", "")
+                .replace("-", "")
+                .toLowerCase(Locale.ROOT);
+        switch (normalized) {
+            case "head" -> parts.add(AnimatedPart.HEAD);
+            case "torso" -> parts.add(AnimatedPart.TORSO);
+            case "leftarm" -> parts.add(AnimatedPart.LEFT_ARM);
+            case "rightarm" -> parts.add(AnimatedPart.RIGHT_ARM);
+            case "leftleg" -> parts.add(AnimatedPart.LEFT_LEG);
+            case "rightleg" -> parts.add(AnimatedPart.RIGHT_LEG);
+            default -> {
+                // body, item, bend, and custom channels do not correspond to a vanilla limb.
+            }
+        }
+    }
+
+    private static Object pairValue(Object pair) {
+        if (pair == null) {
+            return null;
+        }
+        if (pair instanceof Map.Entry<?, ?> entry) {
+            return entry.getValue();
+        }
+        for (String method : new String[]{"getSecond", "getRight", "getValue"}) {
+            Object value = invokeNoArg(pair, method);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static Object readField(Object owner, String name) {
+        for (Class<?> type = owner.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(owner);
+            } catch (NoSuchFieldException ignored) {
+                // Continue through the hierarchy.
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static Object invokeNoArg(Object owner, String name) {
+        for (Class<?> type = owner.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Method method = type.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method.invoke(owner);
+            } catch (NoSuchMethodException ignored) {
+                // Continue through the hierarchy.
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public static void applyBodyTransform(@Nullable AnimationApplier animation, PoseStack poseStack, float partialTick) {

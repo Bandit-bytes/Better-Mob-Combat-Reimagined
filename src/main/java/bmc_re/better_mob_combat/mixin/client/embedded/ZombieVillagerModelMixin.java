@@ -36,6 +36,6 @@ public abstract class ZombieVillagerModelMixin<T extends Zombie> extends Humanoi
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(zombie);
+        return !EmbeddedPlayerAnimator.isAttackAnimating(zombie);
     }
 }

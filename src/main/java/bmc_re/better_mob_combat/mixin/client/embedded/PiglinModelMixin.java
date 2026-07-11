@@ -38,7 +38,7 @@ public abstract class PiglinModelMixin<T extends Mob> {
             float attackTime,
             float ageInTicks
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(mob);
+        return !EmbeddedPlayerAnimator.isAttackAnimating(mob);
     }
 
     @WrapWithCondition(
@@ -61,7 +61,7 @@ public abstract class PiglinModelMixin<T extends Mob> {
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(piglin);
+        return !EmbeddedPlayerAnimator.isAttackAnimating(piglin);
     }
 
     @WrapWithCondition(

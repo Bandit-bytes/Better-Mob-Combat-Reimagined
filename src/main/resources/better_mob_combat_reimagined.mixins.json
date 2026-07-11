@@ -20,8 +20,7 @@
     "client.embedded.PlayerModelMixinMob",
     "client.embedded.ZombieVillagerModelMixin",
     "client.ClientMobAnimationMixin",
-    "client.LivingEntityRendererMixin",
-    "client.VindicatorItemInHandLayerMixin"
+    "client.LivingEntityRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

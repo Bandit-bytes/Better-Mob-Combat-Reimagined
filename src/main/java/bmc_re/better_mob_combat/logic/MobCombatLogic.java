@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobCombatState;
 import bmc_re.better_mob_combat.config.BMCConfig;
 import bmc_re.better_mob_combat.network.BMCNetwork;
+import net.bettercombat.BetterCombatMod;
 import net.bettercombat.api.AttackHand;
 import net.bettercombat.api.WeaponAttributes;
 import net.minecraft.core.Holder;
@@ -162,13 +163,15 @@ public final class MobCombatLogic {
             return;
         }
 
-        int windup = state.bmc$getWindupTicks();
-        if (windup > 1) {
-            state.bmc$setWindupTicks(windup - 1);
+        // Match the original Better Mob Combat counter semantics: consume one complete
+        // windup tick, then apply damage only after the counter reaches zero. Resolving at
+        // one makes the server hit a frame early, which is especially obvious on fast axes.
+        int windup = Math.max(0, state.bmc$getWindupTicks() - 1);
+        state.bmc$setWindupTicks(windup);
+        if (windup > 0) {
             return;
         }
 
-        state.bmc$setWindupTicks(0);
         performAttack(mob, pending, intendedTarget);
         state.bmc$setPendingAttack(null);
         state.bmc$setIntendedTargetId(-1);
@@ -238,6 +241,9 @@ public final class MobCombatLogic {
         if (hitAnything) {
             playConfiguredSound(mob, hand.attack().impactSound());
         }
+        // Match the original mod: a committed attack counts as activity even if the target moved
+        // outside the authored hit shape during the upswing.
+        mob.setNoActionTime(0);
     }
 
     private static List<LivingEntity> findTargets(Mob mob, AttackHand hand, @Nullable Entity intendedTarget) {
@@ -285,7 +291,7 @@ public final class MobCombatLogic {
                 damage.addTransientModifier(new AttributeModifier(
                         DAMAGE_MODIFIER_ID,
                         multiplier - 1.0D,
-                        AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+                        AttributeModifier.Operation.ADD_MULTIPLIED_BASE
                 ));
             }
         }
@@ -293,6 +299,11 @@ public final class MobCombatLogic {
         try {
             if (hand.isOffHand()) {
                 state.bmc$setWeaponOverride(hand.itemStack());
+            }
+            // Better Combat's fast-attack option bypasses LivingEntity hurt throttling. The original
+            // Better Mob Combat did the same before delegating to the mob's vanilla attack method.
+            if (BetterCombatMod.getConfig() != null && BetterCombatMod.getConfig().allow_fast_attacks) {
+                target.invulnerableTime = 0;
             }
             state.bmc$setCallingVanillaAttack(true);
             return mob.doHurtTarget(target);

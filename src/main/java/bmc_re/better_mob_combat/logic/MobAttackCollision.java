@@ -48,9 +48,12 @@ public final class MobAttackCollision {
         }
         weaponBox.updateVertex();
 
-        AABB targetBox = target.getBoundingBox().inflate(target.getPickRadius());
+        AABB targetBox = target.getBoundingBox();
         Vec3 targetCenter = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
-        if (!weaponBox.intersects(targetBox) && !weaponBox.contains(targetCenter)) {
+        // Match the original CollisionFilter behavior: the actual target collider must intersect
+        // the weapon OBB. Do not inflate by pick radius and do not accept center-only containment,
+        // both of which make near misses feel like long-range hits.
+        if (!weaponBox.intersects(targetBox)) {
             return false;
         }
 
@@ -68,8 +71,9 @@ public final class MobAttackCollision {
 
         double maximumDifference = attackAngle * 0.5D;
         Vec3 centerVector = targetCenter.subtract(origin);
-        return angleWithin(centerVector, weaponBox.axisZ, maximumDifference)
-                || angleWithin(nearestVector, weaponBox.axisZ, maximumDifference);
+        // Use the nearest point on the collider, matching the radial target test. Checking the
+        // center as an alternate path makes side-steps inside large entity boxes too forgiving.
+        return angleWithin(nearestVector, weaponBox.axisZ, maximumDifference);
     }
 
     /** Matches Better Combat's shoulder-height attack origin. */

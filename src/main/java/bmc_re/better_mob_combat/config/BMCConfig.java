@@ -36,10 +36,6 @@ public final class BMCConfig {
             .comment("Maximum number of living entities one mob swing may hit.")
             .defineInRange("maxTargets", 8, 1, 64);
 
-    public static final ModConfigSpec.DoubleValue FALLBACK_BASE_RANGE = BUILDER
-            .comment("Base melee range used when a mob has no ENTITY_INTERACTION_RANGE attribute. Better Combat range_bonus is added to this.")
-            .defineInRange("fallbackBaseRange", 3.0D, 0.5D, 16.0D);
-
     public static final ModConfigSpec.DoubleValue ATTACK_START_RANGE_MULTIPLIER = BUILDER
             .comment("How much of the selected Better Combat attack range is used by the AI reach check. "
                     + "The original 1.20.1 mod used 1.0; the separate start delay lets the mob close distance before the visible swing begins.")
@@ -67,9 +63,11 @@ public final class BMCConfig {
             .comment("Ticks without starting another attack before the mob returns to the first combo animation.")
             .defineInRange("comboResetTicks", 30, 1, 400);
 
-    public static final ModConfigSpec.DoubleValue UPSWING_MULTIPLIER = BUILDER
-            .comment("Additional multiplier applied after Better Combat computes AttackHand.upswingRate(), including Better Combat's own upswing setting.")
-            .defineInRange("upswingMultiplier", 1.0D, 0.05D, 3.0D);
+    public static final ModConfigSpec.DoubleValue ADDITIONAL_UPSWING_MULTIPLIER = BUILDER
+            .comment("Amount added to Better Combat's own upswing multiplier for mob attacks. "
+                    + "This matches the original 1.20.1 Better Mob Combat behavior: 0.0 uses Better Combat's normal timing, "
+                    + "while positive values make the telegraphed upswing longer.")
+            .defineInRange("additionalUpswingMultiplier", 0.15D, 0.0D, 0.8D);
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> ENTITY_BLACKLIST = BUILDER
             .comment("Entity type ids that should keep vanilla melee combat. Example: minecraft:warden")

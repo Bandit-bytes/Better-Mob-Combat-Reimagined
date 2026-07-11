@@ -192,6 +192,12 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         }
 
         try {
+            // The vanilla swing flag is intentionally suppressed by the server combat mixin, so
+            // clear Better Combat's idle grip explicitly before starting the high-priority attack.
+            // Otherwise the idle item transform and the attack item transform stack together and
+            // Fresh Animations makes the held axe appear to corkscrew around the arm.
+            this.bmc$clearWeaponPoses(((Mob) (Object) this).isLeftHanded());
+
             KeyframeAnimation.AnimationBuilder copy = animation.mutableCopy();
             copy.torso.fullyEnablePart(true);
             copy.head.pitch.setEnabled(false);
@@ -247,7 +253,8 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
         ItemStack mainHand = this.getMainHandItem();
         ItemStack offHand = this.getOffhandItem();
-        if (this.swinging
+        if (this.bmc$isAttackAnimationActive()
+                || this.swinging
                 || this.isSwimming()
                 || this.isUsingItem()
                 || this.isFallFlying()

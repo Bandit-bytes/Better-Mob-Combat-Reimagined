@@ -70,7 +70,8 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             float scale,
             CallbackInfo ci
     ) {
-        if (entity instanceof Mob) {
+        if (entity instanceof Mob
+                && !OptionalEmfCompat.isAnimatedEmfVindicator(entity, this.model)) {
             EmbeddedPlayerAnimator.applyBodyTransform(
                     EmbeddedPlayerAnimator.getAnimation(entity),
                     poseStack,
@@ -100,7 +101,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         OptionalEmfCompat.pause(entity, this.model);
     }
 
-    /** Restore Fresh Animations immediately after the base model has been drawn. */
+    /** Resume paused EMF keyframes immediately after the base model render. */
     @Inject(
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
             at = @At(
@@ -118,7 +119,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
-        OptionalEmfCompat.resume(entity, this.model);
+        OptionalEmfCompat.resume(entity);
     }
 
 }

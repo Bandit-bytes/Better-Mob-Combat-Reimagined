@@ -31,7 +31,9 @@ source tree and retains its own license and copyright.
 This mod still depends on Better Combat at runtime. Better Combat is not bundled into this source
 tree and retains its own license and copyright.
 
-## Entity Model Features / Fresh Animations
+## Entity Model Features / Entity Texture Features / Fresh Animations
 
-Entity Model Features and Fresh Animations are not bundled and are not required dependencies. The
-optional compatibility bridge calls EMF's public animation API reflectively when EMF is installed.
+Entity Model Features, Entity Texture Features, and Fresh Animations are not bundled and are not
+required dependencies. The optional compatibility bridge calls EMF's public animation API
+reflectively when EMF is installed. ETF is included only in the development runtime because it is a
+required dependency of EMF; no ETF code is copied or linked into this project.

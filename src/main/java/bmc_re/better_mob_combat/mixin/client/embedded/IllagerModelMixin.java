@@ -143,14 +143,6 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float headPitch,
             CallbackInfo ci
     ) {
-        // Vindicators normally hide their separate arms whenever the vanilla arm pose returns to
-        // CROSSED. A Better Combat swing can continue into recovery after that flag changes, which
-        // made the animated arms disappear and the crossed-arms mesh snap back through the axe.
-        if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
-            this.arms.visible = false;
-            this.leftArm.visible = true;
-            this.rightArm.visible = true;
-        }
         EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
     }
 
@@ -174,7 +166,11 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(illager);
+        // Only suppress vanilla's arm swing while our own attack layer is actually playing.
+        // isAnimating() would also return true for the idle weapon-grip pose, which is active
+        // almost continuously while the illager holds a weapon and would permanently freeze
+        // the vanilla swing instead of only overriding it during a real attack.
+        return !EmbeddedPlayerAnimator.isAttackAnimating(illager);
     }
 
     @WrapWithCondition(
@@ -191,7 +187,7 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float attackTime,
             float ageInTicks
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(mob);
+        return !EmbeddedPlayerAnimator.isAttackAnimating(mob);
     }
 
     @Override

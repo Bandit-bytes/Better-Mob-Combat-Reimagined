@@ -48,3 +48,16 @@ versionRange = "[15.0.130,16)"
 ordering = "AFTER"
 side = "BOTH"
 
+[[dependencies."${mod_id}"]]
+modId = "entity_texture_features"
+type = "optional"
+versionRange = "[7.1,)"
+ordering = "AFTER"
+side = "CLIENT"
+
+[[dependencies."${mod_id}"]]
+modId = "entity_model_features"
+type = "optional"
+versionRange = "[3.0.6,)"
+ordering = "AFTER"
+side = "CLIENT"

@@ -6,14 +6,16 @@ import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.IllagerModel;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
-import org.joml.Vector3f;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -22,29 +24,29 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Optional Entity Model Features/Fresh Animations bridge embedded from Mob Player Animator's
- * 1.21.1 behavior.
+ * Optional Entity Model Features/Fresh Animations bridge.
  *
- * <p>There is intentionally no compile-time EMF dependency. When EMF is installed, reflection is
- * used to pause its custom keyframes for the model parts currently controlled by Player Animator.
- * This prevents Fresh Animations from overwriting Better Combat's pose immediately before the base
- * model is drawn.</p>
+ * <p>EMF is never disabled and the entity is never forced onto its vanilla model. This follows
+ * Mob Player Animator's compatibility path: pause only the EMF parts whose Player Animator
+ * channels are active, temporarily adapt Fresh Animations' custom Vindicator hierarchy, render,
+ * then restore every changed model value immediately.</p>
  */
 public final class OptionalEmfCompat {
     private static final String EMF_API = "traben.entity_model_features.EMFAnimationApi";
-    private static final String EMF_MODEL = "traben.entity_model_features.models.IEMFModel";
+    private static final String EMF_MODEL_INTERFACE = "traben.entity_model_features.models.IEMFModel";
 
     private static final Set<UUID> PAUSED = new HashSet<>();
-    private static final Map<UUID, List<SavedPart>> SAVED_PARTS = new java.util.HashMap<>();
+    private static final Map<UUID, List<PartState>> MODIFIED_PARTS = new HashMap<>();
 
     private static boolean initialized;
     private static boolean available;
     private static boolean warned;
+    private static Class<?> emfModelInterface;
     private static Method isModelAnimated;
     private static Method emfEntityOf;
     private static Method pauseAnimations;
     private static Method resumeAnimations;
-    private static Method getEmfRoot;
+    private static Method getEmfRootModel;
 
     private OptionalEmfCompat() {
     }
@@ -54,165 +56,240 @@ public final class OptionalEmfCompat {
             return;
         }
 
+        UUID uuid = entity.getUUID();
+
         try {
+            // A renderer should always call resume. If a render was interrupted, explicitly resume
+            // EMF before discarding our bookkeeping; simply forgetting PAUSED would leave custom
+            // animation channels frozen on the entity.
+            resumeIfPaused(entity, uuid);
+            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+
             if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
+                return;
+            }
+
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animatedParts =
+                    EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
+            if (animatedParts.isEmpty()) {
+                return;
+            }
+
+            Set<ModelPart> modelParts = Collections.newSetFromMap(new IdentityHashMap<>());
+            collectControlledParts(model, animatedParts, modelParts);
+
+            List<PartState> modified = applyEmfModelModifiers(entity, model, animatedParts, modelParts);
+            if (!modified.isEmpty()) {
+                MODIFIED_PARTS.put(uuid, modified);
+            }
+
+            if (modelParts.isEmpty()) {
+                restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
             Object emfEntity = emfEntityOf.invoke(null, entity);
             if (emfEntity == null) {
+                restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
-            boolean attackAnimation = EmbeddedPlayerAnimator.isAttackAnimating(entity);
-            Set<ModelPart> parts = Collections.newSetFromMap(new IdentityHashMap<>());
-            collectControlledParts(model, attackAnimation, parts);
-
-            List<SavedPart> saved = new ArrayList<>();
-            if (entity.getType() == EntityType.VINDICATOR && getEmfRoot.getDeclaringClass().isInstance(model)) {
-                Object rootObject = getEmfRoot.invoke(model);
-                if (rootObject instanceof ModelPart root) {
-                    applyFreshAnimationsVindicatorFix(root, attackAnimation, parts, saved);
-                }
-            }
-
-            if (parts.isEmpty()) {
-                restore(saved);
-                return;
-            }
-
-            // Store modified custom-part state before invoking EMF so it can still be restored if
-            // an optional API call fails midway through the render.
-            if (!saved.isEmpty()) {
-                SAVED_PARTS.put(entity.getUUID(), saved);
-            }
-            pauseAnimations.invoke(null, emfEntity, (Object) parts.toArray(ModelPart[]::new));
-            PAUSED.add(entity.getUUID());
+            pauseAnimations.invoke(null, emfEntity, (Object) modelParts.toArray(ModelPart[]::new));
+            PAUSED.add(uuid);
         } catch (ReflectiveOperationException | RuntimeException exception) {
-            restore(SAVED_PARTS.remove(entity.getUUID()));
-            warnOnce("Failed to pause Fresh Animations/EMF for animated mob", exception);
+            try {
+                resumeIfPaused(entity, uuid);
+            } catch (ReflectiveOperationException | RuntimeException resumeException) {
+                exception.addSuppressed(resumeException);
+            }
+            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
+            warnOnce("Failed to coordinate Fresh Animations/EMF with a mob attack animation", exception);
         }
     }
 
-    public static void resume(LivingEntity entity, EntityModel<?> model) {
+    public static void resume(LivingEntity entity) {
         if (!initialized || !available) {
             return;
         }
 
-        List<SavedPart> saved = SAVED_PARTS.remove(entity.getUUID());
+        UUID uuid = entity.getUUID();
         try {
-            if (PAUSED.remove(entity.getUUID())) {
-                Object emfEntity = emfEntityOf.invoke(null, entity);
-                if (emfEntity != null) {
-                    resumeAnimations.invoke(null, emfEntity);
-                }
-            }
+            resumeIfPaused(entity, uuid);
         } catch (ReflectiveOperationException | RuntimeException exception) {
-            warnOnce("Failed to resume Fresh Animations/EMF for animated mob", exception);
+            warnOnce("Failed to resume Fresh Animations/EMF after an animated mob render", exception);
         } finally {
-            restore(saved);
+            restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
         }
     }
 
-    private static void collectControlledParts(EntityModel<?> model, boolean attack, Set<ModelPart> parts) {
+
+    private static void resumeIfPaused(LivingEntity entity, UUID uuid) throws ReflectiveOperationException {
+        if (!PAUSED.remove(uuid)) {
+            return;
+        }
+        Object emfEntity = emfEntityOf.invoke(null, entity);
+        if (emfEntity != null) {
+            resumeAnimations.invoke(null, emfEntity);
+        }
+    }
+
+    /**
+     * Fresh Animations renders the visible illager arm as a child of the vanilla arm anchor.
+     * Pause that visible child while Better Mob Combat rotates the parent. The held-item layer
+     * already uses the parent anchor, so the arm and axe now receive one shared transform.
+     *
+     * <p>No legs, torso positions, crossed-arm visibility, or body movement are changed here.</p>
+     */
+    private static List<PartState> applyEmfModelModifiers(
+            LivingEntity entity,
+            EntityModel<?> model,
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated,
+            Set<ModelPart> partsToPause
+    ) throws ReflectiveOperationException {
+        if (entity.getType() != EntityType.VINDICATOR
+                || emfModelInterface == null
+                || !emfModelInterface.isInstance(model)) {
+            return List.of();
+        }
+
+        Object rootObject = getEmfRootModel.invoke(model);
+        if (!(rootObject instanceof ModelPart root)) {
+            return List.of();
+        }
+
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
+            addIfPresent(root, "left_arm#EMF_left_arm", partsToPause);
+        }
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+            addIfPresent(root, "right_arm#EMF_right_arm", partsToPause);
+        }
+        return List.of();
+    }
+
+    private static void addIfPresent(ModelPart root, String path, Set<ModelPart> partsToPause) {
+        ModelPart part = findPart(root, path);
+        if (part != null) {
+            partsToPause.add(part);
+        }
+    }
+
+    public static boolean isAnimatedEmfVindicator(LivingEntity entity, EntityModel<?> model) {
+        if (entity.getType() != EntityType.VINDICATOR || !initialize()) {
+            return false;
+        }
+        try {
+            return emfModelInterface != null
+                    && emfModelInterface.isInstance(model)
+                    && Boolean.TRUE.equals(isModelAnimated.invoke(null, model));
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            warnOnce("Failed to query the active EMF Vindicator model", exception);
+            return false;
+        }
+    }
+
+    private static ModelPart findPart(ModelPart root, String path) {
+        ModelPart current = root;
+        for (String child : path.split("#")) {
+            try {
+                current = current.getChild(child);
+            } catch (RuntimeException exception) {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private static void restoreModifiedParts(List<PartState> states) {
+        if (states == null) {
+            return;
+        }
+        for (PartState state : states) {
+            state.part().y = state.y();
+            state.part().visible = state.visible();
+        }
+    }
+
+    private static void collectControlledParts(
+            EntityModel<?> model,
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated,
+            Set<ModelPart> parts
+    ) {
         if (model instanceof PlayerModel<?> player) {
-            parts.add(player.body);
-            parts.add(player.leftArm);
-            parts.add(player.rightArm);
-            parts.add(player.leftSleeve);
-            parts.add(player.rightSleeve);
-            parts.add(player.jacket);
-            if (attack) {
-                parts.add(player.head);
-                parts.add(player.hat);
-                parts.add(player.leftLeg);
-                parts.add(player.rightLeg);
+            addHumanoidParts(player, animated, parts);
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
+                parts.add(player.jacket);
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
+                parts.add(player.leftSleeve);
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+                parts.add(player.rightSleeve);
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
                 parts.add(player.leftPants);
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
                 parts.add(player.rightPants);
             }
             return;
         }
 
         if (model instanceof HumanoidModel<?> humanoid) {
-            parts.add(humanoid.body);
-            parts.add(humanoid.leftArm);
-            parts.add(humanoid.rightArm);
-            if (attack) {
-                parts.add(humanoid.head);
-                parts.add(humanoid.hat);
-                parts.add(humanoid.leftLeg);
-                parts.add(humanoid.rightLeg);
-            }
+            addHumanoidParts(humanoid, animated, parts);
             return;
         }
 
         if (model instanceof IllagerModel<?> && model instanceof IllagerModelAccess illager) {
-            parts.add(illager.bmc$getBody());
-            parts.add(illager.bmc$getCrossedArms());
-            parts.add(illager.bmc$getLeftArm());
-            parts.add(illager.bmc$getRightArm());
-            if (attack) {
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.HEAD)) {
                 parts.add(illager.bmc$getHead());
                 parts.add(illager.bmc$getHat());
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
+                parts.add(illager.bmc$getBody());
+            }
+            boolean leftArm = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            boolean rightArm = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            if (leftArm) {
+                parts.add(illager.bmc$getLeftArm());
+            }
+            if (rightArm) {
+                parts.add(illager.bmc$getRightArm());
+            }
+            if (leftArm || rightArm) {
+                parts.add(illager.bmc$getCrossedArms());
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
                 parts.add(illager.bmc$getLeftLeg());
+            }
+            if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
                 parts.add(illager.bmc$getRightLeg());
             }
         }
     }
 
-    /**
-     * Mob Player Animator ships these exact default corrections for Fresh Animations' vindicator
-     * hierarchy. Its custom leg children use a different origin, while the resource pack keeps a
-     * separate crossed-arm rotation group visible unless explicitly hidden.
-     */
-    private static void applyFreshAnimationsVindicatorFix(
-            ModelPart root,
-            boolean attack,
-            Set<ModelPart> parts,
-            List<SavedPart> saved
+    private static void addHumanoidParts(
+            HumanoidModel<?> model,
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated,
+            Set<ModelPart> parts
     ) {
-        Set<ModelPart> alreadySaved = Collections.newSetFromMap(new IdentityHashMap<>());
-
-        if (attack) {
-            modify(root, "left_leg#EMF_left_leg", parts, saved, alreadySaved, part ->
-                    part.offsetPos(new Vector3f(0.0F, -12.0F, 0.0F)));
-            modify(root, "right_leg#EMF_right_leg", parts, saved, alreadySaved, part ->
-                    part.offsetPos(new Vector3f(0.0F, -12.0F, 0.0F)));
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.HEAD)) {
+            parts.add(model.head);
+            parts.add(model.hat);
         }
-
-        modify(root, "left_arm", parts, saved, alreadySaved, part -> part.visible = true);
-        modify(root, "right_arm", parts, saved, alreadySaved, part -> part.visible = true);
-        modify(root, "body#EMF_body#EMF_arms_rotation", parts, saved, alreadySaved, part -> part.visible = false);
-    }
-
-    private static void modify(
-            ModelPart root,
-            String path,
-            Set<ModelPart> parts,
-            List<SavedPart> saved,
-            Set<ModelPart> alreadySaved,
-            java.util.function.Consumer<ModelPart> modifier
-    ) {
-        ModelPart part = findPart(root, path);
-        if (part == null) {
-            return;
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
+            parts.add(model.body);
         }
-        if (alreadySaved.add(part)) {
-            saved.add(new SavedPart(part));
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
+            parts.add(model.leftArm);
         }
-        modifier.accept(part);
-        parts.add(part);
-    }
-
-    private static ModelPart findPart(ModelPart root, String path) {
-        ModelPart current = root;
-        try {
-            for (String segment : path.split("#")) {
-                current = current.getChild(segment);
-            }
-            return current;
-        } catch (RuntimeException ignored) {
-            return null;
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+            parts.add(model.rightArm);
+        }
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
+            parts.add(model.leftLeg);
+        }
+        if (animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG)) {
+            parts.add(model.rightLeg);
         }
     }
 
@@ -223,23 +300,34 @@ public final class OptionalEmfCompat {
         initialized = true;
         try {
             Class<?> api = Class.forName(EMF_API);
-            Class<?> emfModel = Class.forName(EMF_MODEL);
+            emfModelInterface = Class.forName(EMF_MODEL_INTERFACE);
             isModelAnimated = findStatic(api, "isModelAnimatedByEMF", 1);
-            emfEntityOf = findStatic(api, "emfEntityOf", 1);
+            // EMF overloads emfEntityOf for Entity and BlockEntity. Bind the normal entity overload.
+            emfEntityOf = findStatic(api, "emfEntityOf", Entity.class);
             pauseAnimations = findStatic(api, "pauseCustomAnimationsForThesePartsOfEntity", 2);
             resumeAnimations = findStatic(api, "resumeAllCustomAnimationsForEntity", 1);
-            getEmfRoot = emfModel.getMethod("emf$getEMFRootModel");
+            getEmfRootModel = emfModelInterface.getMethod("emf$getEMFRootModel");
             available = true;
         } catch (ClassNotFoundException ignored) {
             available = false;
         } catch (ReflectiveOperationException exception) {
             available = false;
-            warnOnce("Entity Model Features was found, but its animation API did not match the expected 1.21.1 API", exception);
+            warnOnce("Entity Model Features was found, but its 1.21.1 animation API was not compatible", exception);
         }
         return available;
     }
 
-    private static Method findStatic(Class<?> owner, String name, int parameterCount) throws NoSuchMethodException {
+    private static Method findStatic(Class<?> owner, String name, Class<?>... parameterTypes)
+            throws NoSuchMethodException {
+        Method method = owner.getMethod(name, parameterTypes);
+        if (!Modifier.isStatic(method.getModifiers())) {
+            throw new NoSuchMethodException(owner.getName() + "#" + name + " is not static");
+        }
+        return method;
+    }
+
+    private static Method findStatic(Class<?> owner, String name, int parameterCount)
+            throws NoSuchMethodException {
         for (Method method : owner.getMethods()) {
             if (method.getName().equals(name)
                     && method.getParameterCount() == parameterCount
@@ -250,15 +338,6 @@ public final class OptionalEmfCompat {
         throw new NoSuchMethodException(owner.getName() + "#" + name + "/" + parameterCount);
     }
 
-    private static void restore(List<SavedPart> saved) {
-        if (saved == null) {
-            return;
-        }
-        for (SavedPart part : saved) {
-            part.restore();
-        }
-    }
-
     private static void warnOnce(String message, Throwable throwable) {
         if (!warned) {
             warned = true;
@@ -266,42 +345,6 @@ public final class OptionalEmfCompat {
         }
     }
 
-    private record SavedPart(
-            ModelPart part,
-            float x,
-            float y,
-            float z,
-            float xRot,
-            float yRot,
-            float zRot,
-            float xScale,
-            float yScale,
-            float zScale,
-            boolean visible
-    ) {
-        SavedPart(ModelPart part) {
-            this(
-                    part,
-                    part.x,
-                    part.y,
-                    part.z,
-                    part.xRot,
-                    part.yRot,
-                    part.zRot,
-                    part.xScale,
-                    part.yScale,
-                    part.zScale,
-                    part.visible
-            );
-        }
-
-        void restore() {
-            this.part.setPos(this.x, this.y, this.z);
-            this.part.setRotation(this.xRot, this.yRot, this.zRot);
-            this.part.xScale = this.xScale;
-            this.part.yScale = this.yScale;
-            this.part.zScale = this.zScale;
-            this.part.visible = this.visible;
-        }
+    private record PartState(ModelPart part, float y, boolean visible) {
     }
 }

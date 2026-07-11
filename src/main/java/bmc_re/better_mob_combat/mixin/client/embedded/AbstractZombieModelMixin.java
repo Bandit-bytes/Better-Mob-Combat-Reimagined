@@ -36,6 +36,6 @@ public abstract class AbstractZombieModelMixin<T extends Monster> extends Humano
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(zombie);
+        return !EmbeddedPlayerAnimator.isAttackAnimating(zombie);
     }
 }
