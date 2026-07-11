@@ -3,6 +3,7 @@ package bmc_re.better_mob_combat.mixin.client;
 import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.config.BMCConfig;
+import bmc_re.better_mob_combat.logic.MobAttackSelector;
 import dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode;
 import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.api.layered.IAnimation;
@@ -20,6 +21,7 @@ import net.bettercombat.client.animation.CustomAnimationPlayer;
 import net.bettercombat.client.animation.PoseSubStack;
 import net.bettercombat.client.animation.modifier.TransmissionSpeedModifier;
 import net.bettercombat.logic.WeaponRegistry;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
@@ -58,6 +60,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private static final Set<ResourceLocation> BMC$MISSING_ANIMATIONS = new HashSet<>();
 
+    @Unique
+    private static final Set<String> BMC$POSE_DIAGNOSTICS = new HashSet<>();
+
     /** Embedded Mob Player Animator storage. */
     @Unique
     private final Map<ResourceLocation, IAnimation> bmc$associatedAnimations = new HashMap<>();
@@ -91,6 +96,22 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private int bmc$attackVisualTicks;
 
+    /** True only while the synchronized attack uses Better Combat's two-handed animation path. */
+    @Unique
+    private boolean bmc$twoHandedAttack;
+
+    /**
+     * Deterministic ownership flag for Better Combat's idle body-pose arm channels. Do not infer
+     * this by reflectively walking Player Animator's modifier tree: fades and wrapper layers can
+     * temporarily hide the underlying keyframe player even though the authored grip is active.
+     */
+    @Unique
+    private boolean bmc$weaponBodyPoseActive;
+
+    /** True while the active idle body pose comes from a two-handed main-hand preset. */
+    @Unique
+    private boolean bmc$twoHandedWeaponPoseActive;
+
     protected ClientMobAnimationMixin(EntityType<? extends LivingEntity> type, Level level) {
         super(type, level);
     }
@@ -112,6 +133,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             this.bmc$animationStack.tick();
             if (this.bmc$attackVisualTicks > 0) {
                 this.bmc$attackVisualTicks--;
+                if (this.bmc$attackVisualTicks == 0) {
+                    this.bmc$twoHandedAttack = false;
+                }
             }
         }
     }
@@ -173,6 +197,21 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     }
 
     @Override
+    public boolean bmc$isArmAnimationActive() {
+        // Every Better Combat attack animation owns its arm channels. Between attacks, only body
+        // pose layers own arms; item-pose layers affect held-item transforms without replacing the
+        // vanilla limb pose. This explicit state keeps two-handed grips stable across subclass
+        // model passes and across Player Animator fade/modifier transitions.
+        return this.bmc$isAttackAnimationActive() || this.bmc$weaponBodyPoseActive;
+    }
+
+    @Override
+    public boolean bmc$isTwoHandedArmAnimationActive() {
+        return (this.bmc$isAttackAnimationActive() && this.bmc$twoHandedAttack)
+                || this.bmc$twoHandedWeaponPoseActive;
+    }
+
+    @Override
     public boolean bmc$shouldForceAttackItemVisible() {
         // Conditional illager item layers should release slightly before the final fade frames.
         // Fresh Animations can return to crossed arms at the tail of the swing; keeping the item
@@ -211,6 +250,7 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             // Otherwise the idle item transform and the attack item transform stack together and
             // Fresh Animations makes the held axe appear to corkscrew around the arm.
             this.bmc$clearWeaponPoses(((Mob) (Object) this).isLeftHanded());
+            this.bmc$twoHandedAttack = twoHanded;
 
             KeyframeAnimation.AnimationBuilder copy = animation.mutableCopy();
             copy.torso.fullyEnablePart(true);
@@ -247,7 +287,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
                     )
             );
 
-            boolean mirror = offHand;
+            // Better Combat's TWO_HANDED hand is always based on the main-hand animation.
+            // Mirroring it as an offhand attack twists polearms and great weapons across the body.
+            boolean mirror = !twoHanded && offHand;
             if (((Mob) (Object) this).isLeftHanded()) {
                 mirror = !mirror;
             }
@@ -297,12 +339,42 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         }
 
         WeaponAttributes mainAttributes = WeaponRegistry.getAttributes(mainHand);
-        WeaponAttributes offHandAttributes = WeaponRegistry.getAttributes(offHand);
+        boolean twoHanded = mainAttributes != null && mainAttributes.isTwoHanded();
+        boolean dualWielding = MobAttackSelector.isDualWielding(this);
 
-        KeyframeAnimation mainPose = this.bmc$getPose(mainAttributes == null ? null : mainAttributes.pose());
-        KeyframeAnimation offHandPose = this.bmc$getPose(
-                offHandAttributes == null ? null : offHandAttributes.offHandPose()
-        );
+        String resolvedPoseId = mainAttributes == null ? null : mainAttributes.pose();
+        KeyframeAnimation mainPose = this.bmc$getPose(resolvedPoseId);
+
+        // Diagnostic output is intentionally one line per distinct held item/result, not every
+        // tick. It distinguishes a Better Combat attribute-resolution failure from a model-render
+        // overwrite without requiring a debugger.
+        if (!mainHand.isEmpty()) {
+            ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(mainHand.getItem());
+            String diagnosticKey = itemId + "|" + resolvedPoseId + "|" + twoHanded + "|" + (mainPose != null);
+            if (BMC$POSE_DIAGNOSTICS.add(diagnosticKey)) {
+                BetterMobCombatReimagined.LOGGER.info(
+                        "[BMC pose diagnostic] mob={} item={} attributesFound={} resolvedPose={} twoHanded={} animationFound={}",
+                        mob.getType(),
+                        itemId,
+                        mainAttributes != null,
+                        resolvedPoseId,
+                        twoHanded,
+                        mainPose != null
+                );
+            }
+        }
+
+        // Better Combat disables the offhand while a two-handed weapon is equipped. Mobs do not
+        // have Better Combat's player inventory guard, so an item may still physically exist in the
+        // slot. Never let that item's pose animate the left arm/item channel over a spear, glaive,
+        // claymore, staff, or other two-handed main-hand pose.
+        KeyframeAnimation offHandPose = null;
+        if (!twoHanded && dualWielding) {
+            WeaponAttributes offHandAttributes = WeaponRegistry.getAttributes(offHand);
+            offHandPose = this.bmc$getPose(
+                    offHandAttributes == null ? null : offHandAttributes.offHandPose()
+            );
+        }
 
         // Item channels must remain active even while the mob is moving. Better Combat stores
         // weapon-specific grip rotation/position in rightItem/leftItem, separately from arm poses.
@@ -310,10 +382,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         this.bmc$offHandItemPose.setPose(offHandPose, leftHanded);
 
         // One-handed body poses should not lock the entire mob while walking/crouching. Two-handed
-        // poses remain active because their arm placement is necessary for the weapon to look right.
+        // poses remain active because both arms are part of the authored grip.
         KeyframeAnimation mainBodyPose = mainPose;
         KeyframeAnimation offHandBodyPose = offHandPose;
-        boolean twoHanded = mainAttributes != null && mainAttributes.isTwoHanded();
         boolean moving = this.getDeltaMovement().horizontalDistanceSqr() > 0.0009D;
         if (!twoHanded && (moving || this.isShiftKeyDown())) {
             mainBodyPose = null;
@@ -322,10 +393,18 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
         this.bmc$mainHandBodyPose.setPose(mainBodyPose, leftHanded);
         this.bmc$offHandBodyPose.setPose(offHandBodyPose, leftHanded);
+
+        // Model subclasses (zombies, skeletons, piglins and illagers) run additional arm code after
+        // HumanoidModel. Record that an authored body pose currently owns those channels so their
+        // vanilla one-handed/crossed-arm logic cannot overwrite a two-handed Better Combat preset.
+        this.bmc$weaponBodyPoseActive = mainBodyPose != null || offHandBodyPose != null;
+        this.bmc$twoHandedWeaponPoseActive = twoHanded && mainBodyPose != null;
     }
 
     @Unique
     private void bmc$clearWeaponPoses(boolean leftHanded) {
+        this.bmc$weaponBodyPoseActive = false;
+        this.bmc$twoHandedWeaponPoseActive = false;
         this.bmc$mainHandItemPose.setPose(null, leftHanded);
         this.bmc$mainHandBodyPose.setPose(null, leftHanded);
         this.bmc$offHandItemPose.setPose(null, leftHanded);

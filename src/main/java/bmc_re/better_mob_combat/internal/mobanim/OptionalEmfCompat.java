@@ -40,6 +40,7 @@ public final class OptionalEmfCompat {
 
     private static final Set<UUID> PAUSED = new HashSet<>();
     private static final Map<UUID, List<PartState>> SAVED_PARTS = new HashMap<>();
+    private static final Set<String> DIAGNOSTIC_KEYS = new HashSet<>();
 
     private static boolean initialized;
     private static boolean available;
@@ -55,7 +56,10 @@ public final class OptionalEmfCompat {
     }
 
     public static void pause(LivingEntity entity, EntityModel<?> model) {
-        if (!EmbeddedPlayerAnimator.isAnimating(entity) || !initialize()) {
+        // Player Animator's wrapper/fade tree can briefly report inactive while Better Combat's
+        // deterministic pose state still owns the arms. Do not skip EMF coordination in that gap.
+        if ((!EmbeddedPlayerAnimator.isAnimating(entity)
+                && !EmbeddedPlayerAnimator.isArmAnimating(entity)) || !initialize()) {
             return;
         }
 
@@ -65,7 +69,16 @@ public final class OptionalEmfCompat {
             resumeIfPaused(entity, uuid);
             restoreSavedParts(SAVED_PARTS.remove(uuid));
 
-            if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
+            boolean emfAnimated = Boolean.TRUE.equals(isModelAnimated.invoke(null, model));
+            if (!emfAnimated) {
+                String key = "not-animated|" + entity.getType() + "|" + model.getClass().getName();
+                if (DIAGNOSTIC_KEYS.add(key) && EmbeddedPlayerAnimator.isArmAnimating(entity)) {
+                    BetterMobCombatReimagined.LOGGER.info(
+                            "[BMC EMF diagnostic] mob={} model={} emfAnimated=false; EMF pause/reapply branch skipped",
+                            entity.getType(),
+                            model.getClass().getName()
+                    );
+                }
                 return;
             }
 
@@ -73,8 +86,12 @@ public final class OptionalEmfCompat {
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
 
             // Layer-tree inspection can briefly report no enabled channels during a transition.
-            // The synchronized attack state still tells us which weapon arm must remain controlled.
-            if (entity.getType() == EntityType.VINDICATOR
+            // Explicit Better Combat state is authoritative: two-handed presets always own both
+            // arms, while a one-handed Vindicator attack owns its actual weapon arm.
+            if (EmbeddedPlayerAnimator.isTwoHandedArmAnimating(entity)) {
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            } else if (entity.getType() == EntityType.VINDICATOR
                     && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
                 if (entity instanceof Mob mob && mob.isLeftHanded()) {
                     animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
@@ -94,6 +111,18 @@ public final class OptionalEmfCompat {
                 SAVED_PARTS.put(uuid, saved);
             }
 
+            String diagnosticKey = "active|" + entity.getType() + "|" + model.getClass().getName()
+                    + "|" + animated + "|" + partsToPause.size();
+            if (DIAGNOSTIC_KEYS.add(diagnosticKey)) {
+                BetterMobCombatReimagined.LOGGER.info(
+                        "[BMC EMF diagnostic] mob={} model={} emfAnimated=true animatedParts={} pausedPartCount={}",
+                        entity.getType(),
+                        model.getClass().getName(),
+                        animated,
+                        partsToPause.size()
+                );
+            }
+
             if (partsToPause.isEmpty()) {
                 restoreSavedParts(SAVED_PARTS.remove(uuid));
                 return;
@@ -108,14 +137,14 @@ public final class OptionalEmfCompat {
             pauseAnimations.invoke(null, emfEntity, (Object) partsToPause.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
 
-            // Fresh Animations performs custom hierarchy updates after vanilla setupAnim. Reapply
-            // only the attack arms at the last possible point. Body, head and legs remain entirely
-            // controlled by Fresh Animations.
-            if (entity.getType() == EntityType.VINDICATOR
-                    && EmbeddedPlayerAnimator.isAttackAnimating(entity)
-                    && model instanceof IllagerModelAccess illager) {
-                EmbeddedPlayerAnimator.applyAttackArmsOnly(
-                        illager,
+            // Fresh Animations performs late hierarchy updates after vanilla setupAnim. Pausing
+            // a part prevents further EMF changes, but does not undo the transform EMF already
+            // wrote. Reapply every Better Combat-owned channel immediately before the base model
+            // is rendered. This is required for custom idle poses such as Malfu's two-handed hold,
+            // and it also makes custom attack animations work consistently on all humanoid mobs.
+            if (model instanceof HumanoidModelAccess humanoid) {
+                EmbeddedPlayerAnimator.applySelectedPartsToModel(
+                        humanoid,
                         EmbeddedPlayerAnimator.getAnimation(entity),
                         animated
                 );

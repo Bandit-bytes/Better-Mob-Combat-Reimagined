@@ -160,7 +160,8 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
      * useCrossedArms} boolean (from {@code entity.isAggressive()}/spellcasting checks) and uses it
      * to swap between the crossed-arms "arms" part and the individual leftArm/rightArm parts -
      * hiding whatever the mob is holding whenever that boolean is true. Force it false while our
-     * attack animation is actually playing so the held weapon never gets swapped out mid-swing.
+     * arm animation is active so two-handed idle grips and attacks both keep the individual arms
+     * and held weapon visible.
      */
     @ModifyVariable(
             method = "setupAnim(Lnet/minecraft/world/entity/monster/AbstractIllager;FFFFF)V",
@@ -176,7 +177,7 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float netHeadYaw,
             float headPitch
     ) {
-        return EmbeddedPlayerAnimator.isAttackAnimating(illager) ? false : useCrossedArms;
+        return EmbeddedPlayerAnimator.isArmAnimating(illager) ? false : useCrossedArms;
     }
 
     @WrapWithCondition(
@@ -199,11 +200,10 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float netHeadYaw,
             float headPitch
     ) {
-        // Only suppress vanilla's arm swing while our own attack layer is actually playing.
-        // isAnimating() would also return true for the idle weapon-grip pose, which is active
-        // almost continuously while the illager holds a weapon and would permanently freeze
-        // the vanilla swing instead of only overriding it during a real attack.
-        return !EmbeddedPlayerAnimator.isAttackAnimating(illager);
+        // Suppress vanilla's arm swing whenever Better Combat owns an arm channel. This includes
+        // the authored two-handed idle body pose; allowing this call through would immediately
+        // replace that grip with IllagerModel's one-handed aggressive stance.
+        return !EmbeddedPlayerAnimator.isArmAnimating(illager);
     }
 
     @WrapWithCondition(
@@ -220,7 +220,7 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float attackTime,
             float ageInTicks
     ) {
-        return !EmbeddedPlayerAnimator.isAttackAnimating(mob);
+        return !EmbeddedPlayerAnimator.isArmAnimating(mob);
     }
 
     @Override

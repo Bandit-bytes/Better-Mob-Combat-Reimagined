@@ -1,5 +1,6 @@
 package bmc_re.better_mob_combat.mixin.client;
 
+import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.client.RangedMobAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
@@ -13,9 +14,13 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Adds the lightweight ranged aiming/recoil adjustments after the concrete mob model completes
@@ -24,6 +29,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(LivingEntityRenderer.class)
 public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extends EntityModel<T>> {
+    @Unique
+    private static final Set<String> BMC$RENDER_DIAGNOSTICS = new HashSet<>();
+
     @Shadow
     protected M model;
 
@@ -50,6 +58,28 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         }
 
         animatedMob.bmc$setRenderPartialTick(partialTick);
+
+        if (animatedMob.bmc$isArmAnimationActive()) {
+            String diagnosticKey = entity.getType() + "|" + this.model.getClass().getName()
+                    + "|" + animatedMob.bmc$isTwoHandedArmAnimationActive();
+            if (BMC$RENDER_DIAGNOSTICS.add(diagnosticKey)) {
+                BetterMobCombatReimagined.LOGGER.info(
+                        "[BMC render diagnostic] mob={} model={} stackActive={} armOwned={} twoHandedArmOwned={} detectedParts={}",
+                        entity.getType(),
+                        this.model.getClass().getName(),
+                        EmbeddedPlayerAnimator.isAnimating(entity),
+                        animatedMob.bmc$isArmAnimationActive(),
+                        animatedMob.bmc$isTwoHandedArmAnimationActive(),
+                        EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity)
+                );
+            }
+        }
+
+        // HumanoidModel's own TAIL injection is not late enough for every concrete mob model.
+        // Reapply after the virtual setupAnim call has completely returned, before any render layer
+        // or EMF pre-render hook can consume the final limb transforms.
+        EmbeddedPlayerAnimator.reapplyAfterConcreteModelSetup(this.model, entity);
+
         RangedMobAnimator.apply(entity, humanoidModel, partialTick);
         humanoidModel.hat.copyFrom(humanoidModel.head);
     }

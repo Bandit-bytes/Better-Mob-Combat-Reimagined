@@ -21,7 +21,7 @@ public abstract class PiglinModelMixin<T extends Mob> {
             )
     )
     private boolean bmc$onlyHoldWeaponHighWhenIdle(PiglinModel<T> model, T piglin) {
-        return !EmbeddedPlayerAnimator.isAnimating(piglin);
+        return !EmbeddedPlayerAnimator.isArmAnimating(piglin);
     }
 
     @WrapWithCondition(
@@ -38,7 +38,7 @@ public abstract class PiglinModelMixin<T extends Mob> {
             float attackTime,
             float ageInTicks
     ) {
-        return !EmbeddedPlayerAnimator.isAttackAnimating(mob);
+        return !EmbeddedPlayerAnimator.isArmAnimating(mob);
     }
 
     @WrapWithCondition(
@@ -61,7 +61,7 @@ public abstract class PiglinModelMixin<T extends Mob> {
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAttackAnimating(piglin);
+        return !EmbeddedPlayerAnimator.isArmAnimating(piglin);
     }
 
     @WrapWithCondition(
@@ -81,6 +81,6 @@ public abstract class PiglinModelMixin<T extends Mob> {
             float netHeadYaw,
             float headPitch
     ) {
-        return !EmbeddedPlayerAnimator.isAnimating(piglin);
+        return !EmbeddedPlayerAnimator.isArmAnimating(piglin);
     }
 }

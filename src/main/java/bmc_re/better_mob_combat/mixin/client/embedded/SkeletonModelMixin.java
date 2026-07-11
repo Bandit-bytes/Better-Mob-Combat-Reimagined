@@ -36,7 +36,7 @@ public abstract class SkeletonModelMixin<T extends Mob & RangedAttackMob> extend
             float headPitch,
             CallbackInfo ci
     ) {
-        if (EmbeddedPlayerAnimator.isAnimating(skeleton)) {
+        if (EmbeddedPlayerAnimator.isArmAnimating(skeleton)) {
             ci.cancel();
         }
     }

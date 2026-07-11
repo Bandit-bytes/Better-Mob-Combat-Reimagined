@@ -15,6 +15,16 @@ public interface MobAnimationAccess {
 
     boolean bmc$isAttackAnimationActive();
 
+    /**
+     * True while Better Combat owns either arm through an idle weapon body pose or attack layer.
+     * Mob model subclasses use this to avoid replacing authored two-handed grips after the shared
+     * humanoid animation pass has already applied them.
+     */
+    boolean bmc$isArmAnimationActive();
+
+    /** True when the active Better Combat idle pose or attack explicitly requires both arms. */
+    boolean bmc$isTwoHandedArmAnimationActive();
+
     /** Shorter visual window used only by conditional illager held-item layers. */
     boolean bmc$shouldForceAttackItemVisible();
 

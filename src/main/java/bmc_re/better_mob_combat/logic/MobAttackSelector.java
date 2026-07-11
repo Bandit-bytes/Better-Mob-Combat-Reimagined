@@ -26,6 +26,11 @@ public final class MobAttackSelector {
         return hasAttacks(main) && !main.isTwoHanded() && hasAttacks(off) && !off.isTwoHanded();
     }
 
+    public static boolean isTwoHandedWielding(LivingEntity entity) {
+        WeaponAttributes main = WeaponRegistry.getAttributes(entity.getMainHandItem());
+        return hasAttacks(main) && main.isTwoHanded();
+    }
+
     public static boolean shouldUseOffHand(LivingEntity entity, int comboCount) {
         return isDualWielding(entity) && Math.floorMod(comboCount, 2) == 1;
     }
@@ -72,8 +77,11 @@ public final class MobAttackSelector {
             case DUAL_WIELDING_SAME -> isDualWielding(entity)
                     && entity.getMainHandItem().is(entity.getOffhandItem().getItem());
             case DUAL_WIELDING_SAME_CATEGORY -> sameWeaponCategory(entity);
-            case NO_OFFHAND_ITEM -> entity.getOffhandItem().isEmpty();
-            case OFF_HAND_SHIELD -> entity.getOffhandItem().getItem() instanceof ShieldItem;
+            // Better Combat treats the offhand as unavailable while a two-handed main weapon is
+            // equipped. Mirror that rule for mobs even if another mod spawned an item in the slot.
+            case NO_OFFHAND_ITEM -> isTwoHandedWielding(entity) || entity.getOffhandItem().isEmpty();
+            case OFF_HAND_SHIELD -> !isTwoHandedWielding(entity)
+                    && entity.getOffhandItem().getItem() instanceof ShieldItem;
             case MAIN_HAND_ONLY -> !offHandAttack;
             case OFF_HAND_ONLY -> offHandAttack;
             case MOUNTED -> entity.isPassenger();
