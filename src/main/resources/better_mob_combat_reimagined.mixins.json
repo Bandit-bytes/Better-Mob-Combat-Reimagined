@@ -19,6 +19,9 @@
     "client.embedded.PiglinModelMixin",
     "client.embedded.PlayerModelMixinMob",
     "client.embedded.ZombieVillagerModelMixin",
+    "client.embedded.ItemInHandLayerMixin_VindicatorRenderer",
+    "client.embedded.ItemInHandLayerMixin_IllusionerRenderer",
+    "client.embedded.ItemInHandLayerMixin_EvokerRenderer",
     "client.ClientMobAnimationMixin",
     "client.LivingEntityRendererMixin"
   ],

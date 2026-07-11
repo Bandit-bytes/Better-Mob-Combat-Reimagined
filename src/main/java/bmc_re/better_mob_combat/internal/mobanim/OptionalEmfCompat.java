@@ -51,6 +51,30 @@ public final class OptionalEmfCompat {
     private OptionalEmfCompat() {
     }
 
+    private static int bmc$tickCount;
+    private static int bmc$notAnimatedCount;
+    private static int bmc$noAnimatedPartsCount;
+    private static int bmc$noModelPartsCount;
+    private static int bmc$noEntityWrapperCount;
+    private static int bmc$pausedCount;
+
+    private static void bmc$maybeLogTally() {
+        bmc$tickCount++;
+        if (bmc$tickCount % 40 != 0) {
+            return;
+        }
+        BetterMobCombatReimagined.LOGGER.warn(
+                "[BMC-EMF-TALLY] last {} calls: paused={}, notAnimated={}, noAnimatedParts={}, "
+                        + "noModelParts={}, noEntityWrapper={}",
+                bmc$tickCount,
+                bmc$pausedCount,
+                bmc$notAnimatedCount,
+                bmc$noAnimatedPartsCount,
+                bmc$noModelPartsCount,
+                bmc$noEntityWrapperCount
+        );
+    }
+
     public static void pause(LivingEntity entity, EntityModel<?> model) {
         if (!EmbeddedPlayerAnimator.isAnimating(entity) || !initialize()) {
             return;
@@ -66,15 +90,20 @@ public final class OptionalEmfCompat {
             restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
 
             if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
-                debugOnce("EMF reports model NOT animated for " + entity.getType() + " - nothing to pause");
+                if (entity.getType() == EntityType.VINDICATOR) {
+                    bmc$notAnimatedCount++;
+                    bmc$maybeLogTally();
+                }
                 return;
             }
 
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animatedParts =
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
             if (animatedParts.isEmpty()) {
-                debugOnce("Player Animator reports no animated parts for " + entity.getType()
-                        + " - EMF pause skipped, EMF keeps full control");
+                if (entity.getType() == EntityType.VINDICATOR) {
+                    bmc$noAnimatedPartsCount++;
+                    bmc$maybeLogTally();
+                }
                 return;
             }
 
@@ -87,23 +116,30 @@ public final class OptionalEmfCompat {
             }
 
             if (modelParts.isEmpty()) {
-                debugOnce("No matching ModelParts found to pause for " + entity.getType()
-                        + " (animated channels: " + animatedParts + ") - check EMF bone names");
+                if (entity.getType() == EntityType.VINDICATOR) {
+                    bmc$noModelPartsCount++;
+                    bmc$maybeLogTally();
+                }
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
             Object emfEntity = emfEntityOf.invoke(null, entity);
             if (emfEntity == null) {
-                debugOnce("EMF returned no entity wrapper for " + entity.getType() + " - pause skipped");
+                if (entity.getType() == EntityType.VINDICATOR) {
+                    bmc$noEntityWrapperCount++;
+                    bmc$maybeLogTally();
+                }
                 restoreModifiedParts(MODIFIED_PARTS.remove(uuid));
                 return;
             }
 
-            debugOnce("Pausing EMF animation on " + modelParts.size() + " parts for "
-                    + entity.getType() + " (channels: " + animatedParts + ")");
             pauseAnimations.invoke(null, emfEntity, (Object) modelParts.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
+            if (entity.getType() == EntityType.VINDICATOR) {
+                bmc$pausedCount++;
+                bmc$maybeLogTally();
+            }
         } catch (ReflectiveOperationException | RuntimeException exception) {
             try {
                 resumeIfPaused(entity, uuid);
@@ -219,6 +255,9 @@ public final class OptionalEmfCompat {
         }
         for (PartState state : states) {
             state.part().y = state.y();
+            state.part().xRot = state.xRot();
+            state.part().yRot = state.yRot();
+            state.part().zRot = state.zRot();
             state.part().visible = state.visible();
         }
     }
@@ -371,6 +410,9 @@ public final class OptionalEmfCompat {
         }
     }
 
-    private record PartState(ModelPart part, float y, boolean visible) {
+    private record PartState(ModelPart part, float y, float xRot, float yRot, float zRot, boolean visible) {
+        static PartState capture(ModelPart part) {
+            return new PartState(part, part.y, part.xRot, part.yRot, part.zRot, part.visible);
+        }
     }
 }

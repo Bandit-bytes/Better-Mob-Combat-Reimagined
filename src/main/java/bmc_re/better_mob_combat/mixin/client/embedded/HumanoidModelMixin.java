@@ -70,12 +70,12 @@ public abstract class HumanoidModelMixin<T extends LivingEntity> extends Ageable
         }
 
         this.bmc$initialBodyPose = new HumanoidBodyPose(
-                this.head.storePose(),
-                this.body.storePose(),
-                this.leftArm.storePose(),
-                this.rightArm.storePose(),
-                this.leftLeg.storePose(),
-                this.rightLeg.storePose()
+                this.head,
+                this.body,
+                this.leftArm,
+                this.rightArm,
+                this.leftLeg,
+                this.rightLeg
         );
     }
 

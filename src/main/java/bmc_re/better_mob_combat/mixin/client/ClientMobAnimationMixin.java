@@ -87,9 +87,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private float bmc$renderPartialTick;
 
-    @Unique
-    private int bmc$attackAnimationTicks;
-
     protected ClientMobAnimationMixin(EntityType<? extends LivingEntity> type, Level level) {
         super(type, level);
     }
@@ -109,9 +106,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     private void bmc$tickMobAnimationStack(CallbackInfo ci) {
         if (this.level().isClientSide) {
             this.bmc$animationStack.tick();
-            if (this.bmc$attackAnimationTicks > 0) {
-                this.bmc$attackAnimationTicks--;
-            }
         }
     }
 
@@ -164,7 +158,16 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Override
     public boolean bmc$isAttackAnimationActive() {
-        return this.bmc$attackAnimationTicks > 0;
+        // Query the real animation player's own state instead of a hand-maintained tick counter.
+        // A counter computed once from the intended length can drift out of sync with how the
+        // animation actually plays once TransmissionSpeedModifier gears and fade-in easing are
+        // involved - if it reaches zero even slightly before the real animation finishes, every
+        // WrapWithCondition/ModifyVariable gated on this flips back to idle behavior mid-swing,
+        // which shows up as the swing visibly cutting off partway through and snapping back to
+        // the idle weapon-hold pose. This mirrors the original 1.20.1 mod's
+        // bettermobcombat$hasActiveAttackAnimation(), which checks the same way.
+        return this.bmc$attackAnimation.base.getAnimation() != null
+                && this.bmc$attackAnimation.base.getAnimation().isActive();
     }
 
     @Override
@@ -205,6 +208,16 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             float safeLength = Math.max(1.0F, length);
             float sourceUpswing = Mth.clamp(animationUpswing, 0.01F, 0.99F);
             float targetUpswing = Mth.clamp(damageUpswing, 0.01F, 0.99F);
+
+            // Visual-only fine adjustment: shift exactly where in the client's playback the swing
+            // appears to reach its hit pose, without touching the server's damage timing at all
+            // (that's locked to whole ticks and isn't adjustable more finely than that). Expressed in
+            // ticks so it reads intuitively next to the rest of this mod's tick-based timing.
+            float nudgeTicks = BMCConfig.CLIENT_HIT_TIMING_NUDGE_TICKS.get().floatValue();
+            if (nudgeTicks != 0.0F) {
+                targetUpswing = Mth.clamp(targetUpswing + nudgeTicks / safeLength, 0.01F, 0.99F);
+            }
+
             float baseSpeed = Math.max(0.01F, (float) animation.endTick / safeLength);
             float upswingSpeed = Math.max(0.01F, baseSpeed * sourceUpswing / targetUpswing);
             float downwindSpeed = Math.max(0.01F, baseSpeed * (1.0F - sourceUpswing) / (1.0F - targetUpswing));
@@ -227,15 +240,17 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
             CustomAnimationPlayer player = new CustomAnimationPlayer(copy.build(), 0);
             player.setFirstPersonMode(FirstPersonMode.NONE);
-            int fadeIn = Math.max(1, copy.beginTick);
+            // Blending in from the idle pose takes real time on top of the upswing/downswing speed
+            // math above, which assumes the attack pose is playing at full weight from tick 0. A long
+            // fade-in (e.g. driven by this animation's own beginTick) pushes the visible swing later
+            // than the server's actual damage tick, showing up as "hit sound plays, then the axe
+            // catches up a moment later." Cap it to a couple of ticks - enough to avoid a hard snap
+            // from the idle pose, but small enough not to visibly desync from the impact.
+            int fadeIn = Mth.clamp(copy.beginTick, 1, 2);
             this.bmc$attackAnimation.base.replaceAnimationWithFade(
                     AbstractFadeModifier.standardFadeIn(fadeIn, Ease.INOUTSINE),
                     player
             );
-            // Track only the high-priority attack layer. Idle weapon poses can keep the overall
-            // animation stack active indefinitely, so illager rendering must not use stack activity
-            // as a substitute for an actual attack animation.
-            this.bmc$attackAnimationTicks = Math.max(1, Mth.ceil(safeLength) + 1);
         } catch (RuntimeException exception) {
             BetterMobCombatReimagined.LOGGER.error("Failed to play mob attack animation '{}'", id, exception);
         }

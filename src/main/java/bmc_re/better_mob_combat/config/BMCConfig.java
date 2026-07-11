@@ -69,6 +69,15 @@ public final class BMCConfig {
                     + "while positive values make the telegraphed upswing longer.")
             .defineInRange("additionalUpswingMultiplier", 0.15D, 0.0D, 0.8D);
 
+    public static final ModConfigSpec.DoubleValue CLIENT_HIT_TIMING_NUDGE_TICKS = BUILDER
+            .comment("Fine visual-only adjustment (in ticks, 1 tick = 0.05s) to when the swing animation "
+                    + "appears to make contact, relative to the server's actual damage tick. This does NOT "
+                    + "change when damage is applied - the server tick rate can't be adjusted more finely "
+                    + "than whole ticks - it only re-paces the client animation playback. Positive values "
+                    + "make the visible swing reach its hit pose later (sound/damage happens first); "
+                    + "negative values make it reach the hit pose earlier. Try small values like 0.1-0.3.")
+            .defineInRange("clientHitTimingNudgeTicks", 0.0D, -5.0D, 5.0D);
+
     public static final ModConfigSpec.ConfigValue<List<? extends String>> ENTITY_BLACKLIST = BUILDER
             .comment("Entity type ids that should keep vanilla melee combat. Example: minecraft:warden")
             .defineListAllowEmpty("entityBlacklist", List.of(), BMCConfig::validResourceLocation);

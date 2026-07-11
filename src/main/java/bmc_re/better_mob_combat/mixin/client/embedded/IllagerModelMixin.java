@@ -24,6 +24,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.List;
@@ -73,12 +74,12 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
         EmbeddedPlayerAnimator.initializeIllagerBends(root, this);
         EmbeddedPlayerAnimator.initializeSupplier(this, this.bmc$ownedSupplier);
         this.bmc$initialBodyPose = new HumanoidBodyPose(
-                this.head.storePose(),
-                this.bmc$body.storePose(),
-                this.leftArm.storePose(),
-                this.rightArm.storePose(),
-                this.leftLeg.storePose(),
-                this.rightLeg.storePose()
+                this.head,
+                this.bmc$body,
+                this.leftArm,
+                this.rightArm,
+                this.leftLeg,
+                this.rightLeg
         );
     }
 
@@ -144,6 +145,30 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             CallbackInfo ci
     ) {
         EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
+    }
+
+    /**
+     * Ported from the original 1.20.1 mod. Vanilla IllagerModel computes a local {@code
+     * useCrossedArms} boolean (from {@code entity.isAggressive()}/spellcasting checks) and uses it
+     * to swap between the crossed-arms "arms" part and the individual leftArm/rightArm parts -
+     * hiding whatever the mob is holding whenever that boolean is true. Force it false while our
+     * attack animation is actually playing so the held weapon never gets swapped out mid-swing.
+     */
+    @ModifyVariable(
+            method = "setupAnim(Lnet/minecraft/world/entity/monster/AbstractIllager;FFFFF)V",
+            at = @At(value = "STORE", ordinal = 0),
+            ordinal = 0
+    )
+    private boolean bmc$modifyUseCrossedArms(
+            boolean useCrossedArms,
+            T illager,
+            float limbSwing,
+            float limbSwingAmount,
+            float ageInTicks,
+            float netHeadYaw,
+            float headPitch
+    ) {
+        return EmbeddedPlayerAnimator.isAttackAnimating(illager) ? false : useCrossedArms;
     }
 
     @WrapWithCondition(
