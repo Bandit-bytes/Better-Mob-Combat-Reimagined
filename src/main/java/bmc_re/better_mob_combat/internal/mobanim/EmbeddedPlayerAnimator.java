@@ -15,7 +15,6 @@ import dev.kosmx.playerAnim.impl.IMutableModel;
 import dev.kosmx.playerAnim.impl.IUpperPartHelper;
 import dev.kosmx.playerAnim.impl.animation.AnimationApplier;
 import dev.kosmx.playerAnim.impl.animation.IBendHelper;
-import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.LivingEntity;
@@ -63,23 +62,11 @@ public final class EmbeddedPlayerAnimator {
      * their vanilla arm setup after HumanoidModel, so they must not overwrite a two-handed grip.
      */
     public static boolean isArmAnimating(LivingEntity entity) {
-        if (entity instanceof MobAnimationAccess access) {
-            return access.bmc$isArmAnimationActive();
-        }
-
-        // Non-BMC animated entities retain the generic channel inspection fallback. Better Mob
-        // Combat mobs never depend on this reflective path for two-handed pose correctness.
         if (!isAnimating(entity)) {
             return false;
         }
         EnumSet<AnimatedPart> parts = getCurrentlyAnimatedParts(entity);
         return parts.contains(AnimatedPart.LEFT_ARM) || parts.contains(AnimatedPart.RIGHT_ARM);
-    }
-
-    /** Returns true when Better Combat explicitly requires both arm channels. */
-    public static boolean isTwoHandedArmAnimating(LivingEntity entity) {
-        return entity instanceof MobAnimationAccess access
-                && access.bmc$isTwoHandedArmAnimationActive();
     }
 
     /** Vanilla body channels that may overlap with EMF/Fresh Animations. */
@@ -319,8 +306,12 @@ public final class EmbeddedPlayerAnimator {
     }
 
     /**
-     * Final EMF Vindicator pass used by the current IllagerModelMixin. Fresh Animations updates its
-     * hierarchy after setupAnim, so the normal model application can be overwritten. This pass is
+     * Final EMF Vindicator pass. Fresh Animations updates its hierarchy after setupAnim, so the
+     * normal model application can be overwritten. Reapply only arm channels immediately before
+     * rendering; never touch the body, head or legs.
+     */
+    /**
+     * Compatibility entry point used by the current IllagerModelMixin. This final render pass is
      * intentionally limited to the two arm channels so Fresh Animations keeps control of the
      * Vindicator's body, head and legs. Player Animator safely ignores absent arm keyframes.
      */
@@ -335,79 +326,8 @@ public final class EmbeddedPlayerAnimator {
         animation.updatePart("rightArm", model.bmc$getRightArm());
     }
 
-    /**
-     * Reapplies Better Combat after the concrete mob model's complete setupAnim method returns.
-     *
-     * <p>The normal HumanoidModel injection runs at the end of HumanoidModel.setupAnim, but zombie,
-     * skeleton, piglin and EMF-backed model subclasses can still change their arm transforms after
-     * that super call. LivingEntityRenderer invokes this method after the virtual setupAnim call,
-     * which is the first point where every concrete model pass is guaranteed to be finished.</p>
-     */
-    public static void reapplyAfterConcreteModelSetup(EntityModel<?> model, LivingEntity entity) {
-        if (!(model instanceof HumanoidModelAccess humanoid)) {
-            return;
-        }
-
-        AnimationApplier animation = getAnimation(entity);
-        if (animation == null || !animation.isActive()) {
-            return;
-        }
-
-        EnumSet<AnimatedPart> animatedParts = getCurrentlyAnimatedParts(entity);
-
-        // Reflection over Player Animator's modifier tree is only a best-effort optimization.
-        // Better Mob Combat's explicit state is authoritative for two-handed grips.
-        if (isTwoHandedArmAnimating(entity)) {
-            animatedParts.add(AnimatedPart.LEFT_ARM);
-            animatedParts.add(AnimatedPart.RIGHT_ARM);
-        }
-
-        if (!animatedParts.isEmpty()) {
-            applySelectedPartsToModel(humanoid, animation, animatedParts);
-        }
-    }
-
-    /**
-     * Reapplies the Player Animator channels that are owned by the active Better Combat animation.
-     * This is used immediately before EMF/Fresh Animations renders the base model. EMF performs
-     * late hierarchy updates after vanilla setupAnim, so merely pausing those parts is not enough:
-     * their already-written transforms must be replaced with the authored Better Combat values.
-     *
-     * <p>The method accepts the shared humanoid access contract so it works for zombies, skeletons,
-     * piglins and illagers instead of only the special Vindicator bridge.</p>
-     */
-    public static void applySelectedPartsToModel(
+    public static void applyAttackArmsOnly(
             HumanoidModelAccess model,
-            @Nullable AnimationApplier animation,
-            EnumSet<AnimatedPart> animatedParts
-    ) {
-        if (animation == null || !animation.isActive()) {
-            return;
-        }
-        if (animatedParts.contains(AnimatedPart.HEAD)) {
-            animation.updatePart("head", model.bmc$getHead());
-            model.bmc$getHat().copyFrom(model.bmc$getHead());
-        }
-        if (animatedParts.contains(AnimatedPart.TORSO)) {
-            animation.updatePart("torso", model.bmc$getBody());
-        }
-        if (animatedParts.contains(AnimatedPart.LEFT_ARM)) {
-            animation.updatePart("leftArm", model.bmc$getLeftArm());
-        }
-        if (animatedParts.contains(AnimatedPart.RIGHT_ARM)) {
-            animation.updatePart("rightArm", model.bmc$getRightArm());
-        }
-        if (animatedParts.contains(AnimatedPart.LEFT_LEG)) {
-            animation.updatePart("leftLeg", model.bmc$getLeftLeg());
-        }
-        if (animatedParts.contains(AnimatedPart.RIGHT_LEG)) {
-            animation.updatePart("rightLeg", model.bmc$getRightLeg());
-        }
-    }
-
-    /** Retained for the illager call sites that only need their selected arm channels. */
-    public static void applySelectedArmsToModel(
-            IllagerModelAccess model,
             @Nullable AnimationApplier animation,
             EnumSet<AnimatedPart> animatedParts
     ) {

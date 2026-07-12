@@ -35,6 +35,7 @@ import java.util.Set;
 
 public final class MobCombatLogic {
     private static final ResourceLocation DAMAGE_MODIFIER_ID = BetterMobCombatReimagined.id("attack_damage_multiplier");
+    private static final Set<String> ATTACK_DIAGNOSTICS = new LinkedHashSet<>();
 
     private MobCombatLogic() {
     }
@@ -213,6 +214,24 @@ public final class MobCombatLogic {
     private static void startPendingAttack(Mob mob, MobCombatState state, AttackHand hand) {
         float animationLength = MobCombatMath.attackDurationTicks(mob, hand);
         int interval = MobCombatMath.attackIntervalTicks(mob, hand);
+
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(hand.itemStack().getItem());
+        String diagnosticKey = itemId + "|" + hand.attack().animation() + "|" + hand.isOffHand()
+                + "|" + hand.attributes().isTwoHanded();
+        if (ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
+            BetterMobCombatReimagined.LOGGER.info(
+                    "[BMC attack send diagnostic] mob={} item={} animation={} offHand={} twoHanded={} "
+                            + "lengthTicks={} animationUpswing={} damageUpswing={}",
+                    mob.getType(),
+                    itemId,
+                    hand.attack().animation(),
+                    hand.isOffHand(),
+                    hand.attributes().isTwoHanded(),
+                    animationLength,
+                    MobCombatMath.animationUpswing(hand),
+                    MobCombatMath.synchronizedDamageUpswing(mob, hand)
+            );
+        }
         state.bmc$setAttackCooldown(interval + BMCConfig.ADDITIONAL_ATTACK_COOLDOWN.get());
         state.bmc$setWindupTicks(MobCombatMath.impactTick(mob, hand));
 

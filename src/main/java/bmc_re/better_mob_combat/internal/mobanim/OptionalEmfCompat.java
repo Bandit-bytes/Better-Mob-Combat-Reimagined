@@ -40,11 +40,12 @@ public final class OptionalEmfCompat {
 
     private static final Set<UUID> PAUSED = new HashSet<>();
     private static final Map<UUID, List<PartState>> SAVED_PARTS = new HashMap<>();
-    private static final Set<String> DIAGNOSTIC_KEYS = new HashSet<>();
 
     private static boolean initialized;
     private static boolean available;
     private static boolean warned;
+    private static boolean pauseConditionRegistered;
+    private static Method emfEntityAccessor;
     private static Class<?> emfModelInterface;
     private static Method isModelAnimated;
     private static Method emfEntityOf;
@@ -56,29 +57,58 @@ public final class OptionalEmfCompat {
     }
 
     public static void pause(LivingEntity entity, EntityModel<?> model) {
-        // Player Animator's wrapper/fade tree can briefly report inactive while Better Combat's
-        // deterministic pose state still owns the arms. Do not skip EMF coordination in that gap.
-        if ((!EmbeddedPlayerAnimator.isAnimating(entity)
-                && !EmbeddedPlayerAnimator.isArmAnimating(entity)) || !initialize()) {
+        if (!EmbeddedPlayerAnimator.isAnimating(entity) || !initialize()) {
             return;
         }
 
         UUID uuid = entity.getUUID();
+
+        // With EMF's pause condition registered, EMF already stops animating this entity for us, so
+        // the per-part animation pausing below is obsolete. The Fresh Animations VISIBILITY mapping
+        // is NOT obsolete though: FA's crossed-arm node is real geometry in its .jem whose
+        // visibility was being driven by FA's own animations. Now that those animations are paused,
+        // that node would sit permanently visible on top of the individual arms - which renders as
+        // a second pair of hands crossed over the chest. Keep exposing/hiding the right parts.
+        if (pauseConditionRegistered) {
+            try {
+                restoreSavedParts(SAVED_PARTS.remove(uuid));
+
+                if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
+                    return;
+                }
+
+                EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
+                        EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
+                if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+                    if (entity instanceof Mob mob && mob.isLeftHanded()) {
+                        animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+                    } else {
+                        animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+                    }
+                }
+                if (animated.isEmpty()) {
+                    return;
+                }
+
+                // Throwaway - we are not pausing individual parts on this path.
+                Set<ModelPart> unused = Collections.newSetFromMap(new IdentityHashMap<>());
+                List<PartState> saved =
+                        applyFreshAnimationsArmMapping(entity, model, animated, unused);
+                if (!saved.isEmpty()) {
+                    SAVED_PARTS.put(uuid, saved);
+                }
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                restoreSavedParts(SAVED_PARTS.remove(uuid));
+                warnOnce("Failed to apply Fresh Animations visibility mapping", exception);
+            }
+            return;
+        }
         try {
             // Recover safely if another renderer aborted between our BEFORE and AFTER injections.
             resumeIfPaused(entity, uuid);
             restoreSavedParts(SAVED_PARTS.remove(uuid));
 
-            boolean emfAnimated = Boolean.TRUE.equals(isModelAnimated.invoke(null, model));
-            if (!emfAnimated) {
-                String key = "not-animated|" + entity.getType() + "|" + model.getClass().getName();
-                if (DIAGNOSTIC_KEYS.add(key) && EmbeddedPlayerAnimator.isArmAnimating(entity)) {
-                    BetterMobCombatReimagined.LOGGER.info(
-                            "[BMC EMF diagnostic] mob={} model={} emfAnimated=false; EMF pause/reapply branch skipped",
-                            entity.getType(),
-                            model.getClass().getName()
-                    );
-                }
+            if (!Boolean.TRUE.equals(isModelAnimated.invoke(null, model))) {
                 return;
             }
 
@@ -86,13 +116,11 @@ public final class OptionalEmfCompat {
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
 
             // Layer-tree inspection can briefly report no enabled channels during a transition.
-            // Explicit Better Combat state is authoritative: two-handed presets always own both
-            // arms, while a one-handed Vindicator attack owns its actual weapon arm.
-            if (EmbeddedPlayerAnimator.isTwoHandedArmAnimating(entity)) {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-            } else if (entity.getType() == EntityType.VINDICATOR
-                    && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+            // The synchronized attack state still tells us which weapon arm must remain controlled.
+            // This applies to any humanoid-family mob EMF augments (illagers, zombies, skeletons,
+            // piglins, etc.), not just Vindicator - any of them can hold a two-handed weapon.
+            boolean isEmfHumanoid = model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>;
+            if (isEmfHumanoid && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
                 if (entity instanceof Mob mob && mob.isLeftHanded()) {
                     animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
                 } else {
@@ -106,21 +134,9 @@ public final class OptionalEmfCompat {
             Set<ModelPart> partsToPause = Collections.newSetFromMap(new IdentityHashMap<>());
             collectControlledParts(model, animated, partsToPause);
 
-            List<PartState> saved = applyFreshAnimationsVindicatorMapping(entity, model, animated, partsToPause);
+            List<PartState> saved = applyFreshAnimationsArmMapping(entity, model, animated, partsToPause);
             if (!saved.isEmpty()) {
                 SAVED_PARTS.put(uuid, saved);
-            }
-
-            String diagnosticKey = "active|" + entity.getType() + "|" + model.getClass().getName()
-                    + "|" + animated + "|" + partsToPause.size();
-            if (DIAGNOSTIC_KEYS.add(diagnosticKey)) {
-                BetterMobCombatReimagined.LOGGER.info(
-                        "[BMC EMF diagnostic] mob={} model={} emfAnimated=true animatedParts={} pausedPartCount={}",
-                        entity.getType(),
-                        model.getClass().getName(),
-                        animated,
-                        partsToPause.size()
-                );
             }
 
             if (partsToPause.isEmpty()) {
@@ -136,19 +152,6 @@ public final class OptionalEmfCompat {
 
             pauseAnimations.invoke(null, emfEntity, (Object) partsToPause.toArray(ModelPart[]::new));
             PAUSED.add(uuid);
-
-            // Fresh Animations performs late hierarchy updates after vanilla setupAnim. Pausing
-            // a part prevents further EMF changes, but does not undo the transform EMF already
-            // wrote. Reapply every Better Combat-owned channel immediately before the base model
-            // is rendered. This is required for custom idle poses such as Malfu's two-handed hold,
-            // and it also makes custom attack animations work consistently on all humanoid mobs.
-            if (model instanceof HumanoidModelAccess humanoid) {
-                EmbeddedPlayerAnimator.applySelectedPartsToModel(
-                        humanoid,
-                        EmbeddedPlayerAnimator.getAnimation(entity),
-                        animated
-                );
-            }
         } catch (ReflectiveOperationException | RuntimeException exception) {
             try {
                 resumeIfPaused(entity, uuid);
@@ -159,6 +162,77 @@ public final class OptionalEmfCompat {
             warnOnce("Failed to coordinate Fresh Animations/EMF with a mob attack animation", exception);
         }
     }
+
+    /**
+     * Applies Better Combat's live arm keyframes after every setupAnim/feature pass has run, so the
+     * authored swing is the last thing to touch the arms before the model draws. Called separately
+     * from {@link #pause}, which must run before setupAnim in order to stop EMF animating the arms
+     * in the first place.
+     */
+    public static void reapplyArms(LivingEntity entity, EntityModel<?> model) {
+        if (!EmbeddedPlayerAnimator.isAnimating(entity) || !initialized || !available) {
+            return;
+        }
+        // With EMF's pause condition registered, EMF no longer overwrites our pose at all, so the
+        // full-body animation applied during setupAnim already stands. Re-asserting just the arms
+        // here would be redundant at best, and at worst fights that full-body pose.
+        if (pauseConditionRegistered) {
+            return;
+        }
+        if (!PAUSED.contains(entity.getUUID())) {
+            return;
+        }
+        if (!(model instanceof HumanoidModelAccess humanoidAccess)) {
+            return;
+        }
+        if (!(model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>)) {
+            return;
+        }
+
+        EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
+                EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
+        if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+            if (entity instanceof Mob mob && mob.isLeftHanded()) {
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            } else {
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            }
+        }
+        if (animated.isEmpty()) {
+            return;
+        }
+
+        EmbeddedPlayerAnimator.applyAttackArmsOnly(
+                humanoidAccess,
+                EmbeddedPlayerAnimator.getAnimation(entity),
+                animated
+        );
+
+        // Sample the arms across the frames of an actual attack, not one arbitrary frame. A single
+        // one-shot sample can easily land on an idle frame and show a neutral pose that tells us
+        // nothing. Log only while the attack layer is genuinely active, and cap the output.
+        boolean attacking = EmbeddedPlayerAnimator.isAttackAnimating(entity);
+        if (attacking && ROT_SAMPLES < 24) {
+            ROT_SAMPLES++;
+            ModelPart right = humanoidAccess.bmc$getRightArm();
+            ModelPart left = humanoidAccess.bmc$getLeftArm();
+            var applier = EmbeddedPlayerAnimator.getAnimation(entity);
+            BetterMobCombatReimagined.LOGGER.warn(
+                    "[BMC-EMF-ROT] {} #{} attacking={} applier={} applierActive={} channels={} "
+                            + "| R x={} y={} z={} | L x={} y={} z={}",
+                    entity.getType(),
+                    ROT_SAMPLES,
+                    attacking,
+                    applier == null ? "null" : "present",
+                    applier != null && applier.isActive(),
+                    animated,
+                    right.xRot, right.yRot, right.zRot,
+                    left.xRot, left.yRot, left.zRot
+            );
+        }
+    }
+
+    private static int ROT_SAMPLES;
 
     public static void resume(LivingEntity entity) {
         if (!initialized || !available) {
@@ -186,21 +260,23 @@ public final class OptionalEmfCompat {
     }
 
     /**
-     * Fresh Animations' Vindicator uses hidden individual arms plus a visible crossed-arm hierarchy.
-     * Player Animator and Minecraft's held-item layer both target the individual vanilla arm anchor.
-     * During an authored arm swing, expose that exact arm and hide only the crossed-arm node.
+     * Fresh Animations' humanoid-family mobs (illagers, zombies, skeletons, piglins, etc.) use
+     * hidden individual arms plus, for illagers specifically, a visible crossed-arm hierarchy.
+     * Player Animator and Minecraft's held-item layer both target the individual vanilla arm
+     * anchor. During an authored arm swing/two-handed grip, expose that exact arm - and, only for
+     * illagers, hide the crossed-arm node that would otherwise cover it.
      *
      * <p>No leg offsets, torso offsets, model locking or global EMF disabling are used.</p>
      */
-    private static List<PartState> applyFreshAnimationsVindicatorMapping(
+    private static List<PartState> applyFreshAnimationsArmMapping(
             LivingEntity entity,
             EntityModel<?> model,
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated,
             Set<ModelPart> partsToPause
     ) throws ReflectiveOperationException {
-        if (entity.getType() != EntityType.VINDICATOR
-                || emfModelInterface == null
-                || !emfModelInterface.isInstance(model)) {
+        boolean isIllager = model instanceof IllagerModel<?>;
+        boolean isHumanoidFamily = isIllager || model instanceof HumanoidModel<?>;
+        if (!isHumanoidFamily || emfModelInterface == null || !emfModelInterface.isInstance(model)) {
             return List.of();
         }
 
@@ -209,23 +285,157 @@ public final class OptionalEmfCompat {
             return List.of();
         }
 
+        dumpEmfTreeOnce(entity, root);
+        dumpIdentityOnce(entity, model, root);
+
         List<PartState> saved = new ArrayList<>();
         boolean left = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
         boolean right = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+        boolean foundAny = false;
 
+        // Do NOT hardcode child bone names here. EMF's own docs are explicit that CEM part names
+        // differ per model - the "EMF_left_arm" child that exists on Fresh Animations' Vindicator
+        // is not guaranteed to exist (or be named that) on its zombie/skeleton/piglin models. If we
+        // look up a name that isn't there we pause nothing, Fresh Animations keeps driving the real
+        // visible arm mesh, and the weapon appears frozen even though our pose is being applied
+        // correctly to the invisible vanilla arm underneath.
+        //
+        // Instead, find the top-level arm part and pause it plus EVERY descendant, whatever they
+        // happen to be called in this particular pack.
         if (left) {
             setVisible(root, "left_arm", true, saved);
-            addIfPresent(root, "left_arm#EMF_left_arm", partsToPause);
+            if (addPartTree(root, "left_arm", partsToPause)) {
+                foundAny = true;
+            }
         }
         if (right) {
             setVisible(root, "right_arm", true, saved);
-            addIfPresent(root, "right_arm#EMF_right_arm", partsToPause);
+            if (addPartTree(root, "right_arm", partsToPause)) {
+                foundAny = true;
+            }
         }
-        if (left || right) {
+        // The crossed-arm hierarchy that needs hiding only exists on illager-family models
+        // (Vindicator, Pillager, Evoker, etc.) - plain humanoid mobs like zombies and skeletons
+        // never have this node, so skip it for them rather than guess at a path that isn't there.
+        if (isIllager && (left || right)) {
             setVisible(root, "body#EMF_body#EMF_arms_rotation", false, saved);
         }
 
+        if ((left || right) && !foundAny) {
+            debugOnce("EMF arm part lookup found no 'left_arm'/'right_arm' on the EMF root for "
+                    + entity.getType() + " (model " + model.getClass().getName() + "). Use EMF's "
+                    + "config > Tools > Export models to log this model's real part names.");
+        }
+
         return saved;
+    }
+
+    private static final Set<String> DEBUG_LOGGED = new HashSet<>();
+
+    private static void debugOnce(String message) {
+        if (DEBUG_LOGGED.add(message)) {
+            BetterMobCombatReimagined.LOGGER.warn("[BMC-EMF-DEBUG] {}", message);
+        }
+    }
+
+    /**
+     * The decisive check: is the ModelPart our animator writes rotations into the SAME OBJECT that
+     * EMF actually renders? EMF rebuilds the model hierarchy, so if the model's own leftArm/rightArm
+     * fields are different instances from the left_arm/right_arm inside EMF's root tree, then every
+     * pose we apply lands on a part that never gets drawn - which looks exactly like "nothing is
+     * animating" while all our state diagnostics still report success.
+     */
+    private static void dumpIdentityOnce(LivingEntity entity, EntityModel<?> model, ModelPart root) {
+        String key = "identity|" + entity.getType();
+        if (!DEBUG_LOGGED.add(key)) {
+            return;
+        }
+        if (!(model instanceof HumanoidModelAccess access)) {
+            BetterMobCombatReimagined.LOGGER.warn(
+                    "[BMC-EMF-IDENTITY] {} model {} is NOT a HumanoidModelAccess - our arm pose never reaches it",
+                    entity.getType(),
+                    model.getClass().getName()
+            );
+            return;
+        }
+        ModelPart posedLeft = access.bmc$getLeftArm();
+        ModelPart posedRight = access.bmc$getRightArm();
+        ModelPart emfLeft = findPart(root, "left_arm");
+        ModelPart emfRight = findPart(root, "right_arm");
+
+        BetterMobCombatReimagined.LOGGER.warn(
+                "[BMC-EMF-IDENTITY] {} | posedLeft={} emfLeft={} SAME_LEFT={} | posedRight={} emfRight={} SAME_RIGHT={}",
+                entity.getType(),
+                System.identityHashCode(posedLeft),
+                emfLeft == null ? "null" : String.valueOf(System.identityHashCode(emfLeft)),
+                posedLeft == emfLeft,
+                System.identityHashCode(posedRight),
+                emfRight == null ? "null" : String.valueOf(System.identityHashCode(emfRight)),
+                posedRight == emfRight
+        );
+    }
+
+    /**
+     * Logs this mob's real EMF part hierarchy once per entity type. EMF's CEM part names differ per
+     * model and per pack, so this is the only reliable way to see what a given Fresh Animations
+     * model actually calls its bones instead of assuming.
+     */
+    @SuppressWarnings("unchecked")
+    private static void dumpEmfTreeOnce(LivingEntity entity, ModelPart root) {
+        String key = "tree|" + entity.getType();
+        if (!DEBUG_LOGGED.add(key)) {
+            return;
+        }
+        StringBuilder builder = new StringBuilder();
+        try {
+            java.lang.reflect.Field childrenField = ModelPart.class.getDeclaredField("children");
+            childrenField.setAccessible(true);
+            appendTree(root, (Map<String, ModelPart>) childrenField.get(root), childrenField, builder, 0);
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            builder.append(" <could not read children: ").append(exception).append('>');
+        }
+        BetterMobCombatReimagined.LOGGER.warn(
+                "[BMC-EMF-TREE] real EMF part hierarchy for {}:\n{}",
+                entity.getType(),
+                builder
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void appendTree(
+            ModelPart part,
+            Map<String, ModelPart> children,
+            java.lang.reflect.Field childrenField,
+            StringBuilder builder,
+            int depth
+    ) throws ReflectiveOperationException {
+        if (depth > 6 || children == null) {
+            return;
+        }
+        for (Map.Entry<String, ModelPart> entry : children.entrySet()) {
+            builder.append("  ".repeat(depth + 1)).append(entry.getKey()).append('\n');
+            appendTree(
+                    entry.getValue(),
+                    (Map<String, ModelPart>) childrenField.get(entry.getValue()),
+                    childrenField,
+                    builder,
+                    depth + 1
+            );
+        }
+    }
+
+    /**
+     * Pauses the named part and every part beneath it, without assuming anything about how this
+     * pack names its child bones. {@link ModelPart#getAllParts()} yields the part itself plus all
+     * of its descendants.
+     */
+    private static boolean addPartTree(ModelPart root, String path, Set<ModelPart> partsToPause) {
+        ModelPart part = findPart(root, path);
+        if (part == null) {
+            return false;
+        }
+        part.getAllParts().forEach(partsToPause::add);
+        return true;
     }
 
     private static void setVisible(ModelPart root, String path, boolean visible, List<PartState> saved) {
@@ -236,11 +446,13 @@ public final class OptionalEmfCompat {
         }
     }
 
-    private static void addIfPresent(ModelPart root, String path, Set<ModelPart> partsToPause) {
+    private static boolean addIfPresent(ModelPart root, String path, Set<ModelPart> partsToPause) {
         ModelPart part = findPart(root, path);
         if (part != null) {
             partsToPause.add(part);
+            return true;
         }
+        return false;
     }
 
     private static void saveOnce(ModelPart part, List<PartState> saved) {
@@ -250,6 +462,23 @@ public final class OptionalEmfCompat {
             }
         }
         saved.add(PartState.capture(part));
+    }
+
+    /**
+     * True when EMF has an animated custom model for this EntityModel, i.e. EMF owns the render
+     * hierarchy and any manual part-by-part rendering we do would fight it.
+     */
+    public static boolean isEmfAnimatedModel(EntityModel<?> model) {
+        if (!initialize()) {
+            return false;
+        }
+        try {
+            return emfModelInterface != null
+                    && emfModelInterface.isInstance(model)
+                    && Boolean.TRUE.equals(isModelAnimated.invoke(null, model));
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            return false;
+        }
     }
 
     public static boolean isAnimatedEmfVindicator(LivingEntity entity, EntityModel<?> model) {
@@ -355,6 +584,7 @@ public final class OptionalEmfCompat {
             resumeAnimations = findStatic(api, "resumeAllCustomAnimationsForEntity", 1);
             getEmfRootModel = emfModelInterface.getMethod("emf$getEMFRootModel");
             available = true;
+            registerPauseCondition(api);
         } catch (ClassNotFoundException ignored) {
             available = false;
         } catch (ReflectiveOperationException exception) {
@@ -362,6 +592,90 @@ public final class OptionalEmfCompat {
             warnOnce("Entity Model Features was found, but its animation API was not compatible", exception);
         }
         return available;
+    }
+
+    /**
+     * Registers a pause condition with EMF.
+     *
+     * <p>This is the API EMF added explicitly for animation/emote mods (its changelog cites
+     * EmoteCraft, which is built on the same Player Animator library this mod embeds). It is the
+     * correct mechanism for our case.</p>
+     *
+     * <p>Pausing individual model parts cannot work here: EMF re-asserts its own transforms during
+     * its render pass, after every hook we have. Measurements confirmed Better Combat writes a
+     * correct, fully-formed swing into the exact ModelPart EMF renders, immediately before the draw
+     * call - and EMF still discarded it. A registered pause condition instead makes EMF skip
+     * <em>animating</em> the entity for that frame, while its custom model geometry and textures
+     * (i.e. everything Fresh Animations looks like) continue to render normally.</p>
+     */
+    private static void registerPauseCondition(Class<?> api) {
+        Method register = null;
+        for (Method method : api.getMethods()) {
+            if (method.getName().equals("registerPauseCondition")
+                    && method.getParameterCount() == 1
+                    && Modifier.isStatic(method.getModifiers())) {
+                register = method;
+                break;
+            }
+        }
+        if (register == null) {
+            debugOnce("EMF has no registerPauseCondition(Function) - this EMF version predates the "
+                    + "animation-mod pause API, falling back to per-part pausing (which EMF may "
+                    + "override during its own render pass)");
+            return;
+        }
+
+        try {
+            java.util.function.Function<Object, Boolean> condition = emfEntity -> {
+                try {
+                    Entity entity = entityFromEmfEntity(emfEntity);
+                    if (!(entity instanceof LivingEntity living)) {
+                        return Boolean.FALSE;
+                    }
+                    // Pause EMF's animations for exactly as long as Better Combat is driving this
+                    // mob. Everything else about the entity - model, texture, all other mobs -
+                    // is untouched.
+                    return EmbeddedPlayerAnimator.isAnimating(living);
+                } catch (RuntimeException exception) {
+                    return Boolean.FALSE;
+                }
+            };
+            register.invoke(null, condition);
+            pauseConditionRegistered = true;
+            BetterMobCombatReimagined.LOGGER.info(
+                    "[BMC-EMF] Registered pause condition with EMF - Fresh Animations will yield the "
+                            + "model to Better Combat while a mob attack/weapon pose is playing."
+            );
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            warnOnce("Failed to register a pause condition with Entity Model Features", exception);
+        }
+    }
+
+    /** Resolves the vanilla Entity behind EMF's EMFEntity wrapper, whatever it names its accessor. */
+    private static Entity entityFromEmfEntity(Object emfEntity) {        if (emfEntity instanceof Entity direct) {
+        return direct;
+    }
+        if (emfEntityAccessor == null) {
+            for (Method method : emfEntity.getClass().getMethods()) {
+                if (method.getParameterCount() == 0
+                        && Entity.class.isAssignableFrom(method.getReturnType())) {
+                    method.setAccessible(true);
+                    emfEntityAccessor = method;
+                    debugOnce("Resolved EMFEntity -> Entity accessor: " + method.getName());
+                    break;
+                }
+            }
+        }
+        if (emfEntityAccessor == null) {
+            debugOnce("Could not resolve an Entity accessor on EMFEntity ("
+                    + emfEntity.getClass().getName() + ")");
+            return null;
+        }
+        try {
+            return (Entity) emfEntityAccessor.invoke(emfEntity);
+        } catch (ReflectiveOperationException exception) {
+            return null;
+        }
     }
 
     private static Method findStatic(Class<?> owner, String name, Class<?>... parameterTypes)

@@ -63,6 +63,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private static final Set<String> BMC$POSE_DIAGNOSTICS = new HashSet<>();
 
+    @Unique
+    private static final Set<String> BMC$ATTACK_DIAGNOSTICS = new HashSet<>();
+
     /** Embedded Mob Player Animator storage. */
     @Unique
     private final Map<ResourceLocation, IAnimation> bmc$associatedAnimations = new HashMap<>();
@@ -242,6 +245,20 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         KeyframeAnimation animation = this.bmc$getKeyframeAnimation(id, "attack");
         if (animation == null) {
             return;
+        }
+
+        String diagnosticKey = id + "|" + offHand + "|" + twoHanded;
+        if (BMC$ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
+            BetterMobCombatReimagined.LOGGER.info(
+                    "[BMC attack receive diagnostic] mob={} animation={} animationFound=true "
+                            + "offHand={} twoHanded={} packetLengthTicks={} sourceEndTick={}",
+                    ((Mob) (Object) this).getType(),
+                    id,
+                    offHand,
+                    twoHanded,
+                    length,
+                    animation.endTick
+            );
         }
 
         try {

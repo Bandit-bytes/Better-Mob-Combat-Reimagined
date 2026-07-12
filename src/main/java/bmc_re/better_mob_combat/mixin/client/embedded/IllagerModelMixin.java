@@ -97,6 +97,19 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             int packedOverlay,
             int color
     ) {
+        // When EMF has an animated custom model, EMF owns the render hierarchy. This bend path
+        // renders each vanilla ModelPart by hand, which under EMF draws them outside that hierarchy:
+        // the legs end up at torso height / inverted, and parts get drawn twice (the visible stutter
+        // during a swing). It only ever triggers while the animation processor is active, which is
+        // exactly why the legs looked fine walking and broke on every swing.
+        //
+        // Measured pivots confirmed the pose itself is correct (vindicator legs sit at y=11.95,
+        // matching the zombie's 12.0), so this is purely a rendering problem. Fall back to the
+        // normal render and let EMF draw its own hierarchy.
+        if (OptionalEmfCompat.isEmfAnimatedModel((EntityModel<?>) (Object) this)) {
+            return false;
+        }
+
         return EmbeddedPlayerAnimator.renderIllagerWithBends(
                 poseStack,
                 vertices,
@@ -145,14 +158,14 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             float headPitch,
             CallbackInfo ci
     ) {
-        if (OptionalEmfCompat.isAnimatedEmfVindicator(entity, (EntityModel<?>) (Object) this)) {
-            EmbeddedPlayerAnimator.applyArmsOnlyToModel(
-                    this,
-                    EmbeddedPlayerAnimator.getAnimation(entity)
-            );
-        } else {
-            EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
-        }
+        // Apply the full body pose, EMF or not.
+        //
+        // This used to branch: under EMF we applied ONLY the arms, because EMF was still animating
+        // the body and we just wanted to override the weapon arm on top of it. That is no longer
+        // true. EMF now yields the entire pose for this mob via the pause condition registered in
+        // OptionalEmfCompat, so an arms-only pass leaves the legs, torso and head driven by nobody
+        // at all - they hold stale values and visibly collapse into the body during a swing.
+        EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
     }
 
     /**
