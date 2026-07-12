@@ -1,6 +1,7 @@
 package bmc_re.better_mob_combat.internal.mobanim;
 
 import bmc_re.better_mob_combat.BetterMobCombatReimagined;
+import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.IllagerModel;
@@ -10,6 +11,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.AbstractIllager;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -69,7 +71,7 @@ public final class OptionalEmfCompat {
         // visibility was being driven by FA's own animations. Now that those animations are paused,
         // that node would sit permanently visible on top of the individual arms - which renders as
         // a second pair of hands crossed over the chest. Keep exposing/hiding the right parts.
-        if (pauseConditionRegistered) {
+        if (pauseConditionRegistered && !(entity instanceof AbstractIllager)) {
             try {
                 restoreSavedParts(SAVED_PARTS.remove(uuid));
 
@@ -79,13 +81,7 @@ public final class OptionalEmfCompat {
 
                 EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
                         EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
-                if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
-                    if (entity instanceof Mob mob && mob.isLeftHanded()) {
-                        animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-                    } else {
-                        animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-                    }
-                }
+                bmc$ensureWeaponArms(entity, animated);
                 if (animated.isEmpty()) {
                     return;
                 }
@@ -120,13 +116,21 @@ public final class OptionalEmfCompat {
             // This applies to any humanoid-family mob EMF augments (illagers, zombies, skeletons,
             // piglins, etc.), not just Vindicator - any of them can hold a two-handed weapon.
             boolean isEmfHumanoid = model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>;
-            if (isEmfHumanoid && EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
-                if (entity instanceof Mob mob && mob.isLeftHanded()) {
-                    animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-                } else {
-                    animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-                }
+            if (isEmfHumanoid) {
+                bmc$ensureWeaponArms(entity, animated);
             }
+            // Fresh Animations' illager lower-leg hierarchy must keep running during attacks.
+            // The whole-model pause condition collapses those child bones into their base CEM pose,
+            // so illagers selectively yield only the authored upper-body branches to Better Combat.
+            if (model instanceof IllagerModel<?> && entity instanceof AbstractIllager) {
+                animated.retainAll(EnumSet.of(
+                        EmbeddedPlayerAnimator.AnimatedPart.HEAD,
+                        EmbeddedPlayerAnimator.AnimatedPart.TORSO,
+                        EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM,
+                        EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM
+                ));
+            }
+
             if (animated.isEmpty()) {
                 return;
             }
@@ -176,7 +180,7 @@ public final class OptionalEmfCompat {
         // With EMF's pause condition registered, EMF no longer overwrites our pose at all, so the
         // full-body animation applied during setupAnim already stands. Re-asserting just the arms
         // here would be redundant at best, and at worst fights that full-body pose.
-        if (pauseConditionRegistered) {
+        if (pauseConditionRegistered && !(entity instanceof AbstractIllager)) {
             return;
         }
         if (!PAUSED.contains(entity.getUUID())) {
@@ -191,13 +195,7 @@ public final class OptionalEmfCompat {
 
         EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
                 EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
-        if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
-            if (entity instanceof Mob mob && mob.isLeftHanded()) {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-            } else {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-            }
-        }
+        bmc$ensureWeaponArms(entity, animated);
         if (animated.isEmpty()) {
             return;
         }
@@ -233,6 +231,32 @@ public final class OptionalEmfCompat {
     }
 
     private static int ROT_SAMPLES;
+
+    /**
+     * Makes attack-arm ownership explicit. Layer inspection can briefly miss a channel during a
+     * transition, which is especially visible on two-handed attacks. The synchronized mob state is
+     * authoritative: two-handed poses/attacks always own both arms; one-handed attacks own the
+     * mob's dominant weapon arm.
+     */
+    private static void bmc$ensureWeaponArms(
+            LivingEntity entity,
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated
+    ) {
+        if (entity instanceof MobAnimationAccess access
+                && access.bmc$isTwoHandedArmAnimationActive()) {
+            animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            return;
+        }
+
+        if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+            if (entity instanceof Mob mob && mob.isLeftHanded()) {
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            } else {
+                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            }
+        }
+    }
 
     public static void resume(LivingEntity entity) {
         if (!initialized || !available) {
@@ -289,9 +313,21 @@ public final class OptionalEmfCompat {
         dumpIdentityOnce(entity, model, root);
 
         List<PartState> saved = new ArrayList<>();
+        boolean head = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.HEAD);
+        boolean torso = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO);
         boolean left = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
         boolean right = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         boolean foundAny = false;
+
+        // Two-handed and heavy attacks frequently animate the torso (and sometimes the head) in
+        // addition to both arms. Pause those complete EMF branches too, while deliberately leaving
+        // left_leg/right_leg and all lower-leg descendants under Fresh Animations control.
+        if (head && addPartTree(root, "head", partsToPause)) {
+            foundAny = true;
+        }
+        if (torso && addPartTree(root, "body", partsToPause)) {
+            foundAny = true;
+        }
 
         // Do NOT hardcode child bone names here. EMF's own docs are explicit that CEM part names
         // differ per model - the "EMF_left_arm" child that exists on Fresh Animations' Vindicator
@@ -321,10 +357,11 @@ public final class OptionalEmfCompat {
             setVisible(root, "body#EMF_body#EMF_arms_rotation", false, saved);
         }
 
-        if ((left || right) && !foundAny) {
-            debugOnce("EMF arm part lookup found no 'left_arm'/'right_arm' on the EMF root for "
-                    + entity.getType() + " (model " + model.getClass().getName() + "). Use EMF's "
-                    + "config > Tools > Export models to log this model's real part names.");
+        if ((head || torso || left || right) && !foundAny) {
+            debugOnce("EMF upper-body part lookup found no matching head/body/arm branches on the "
+                    + "EMF root for " + entity.getType() + " (model "
+                    + model.getClass().getName() + "). Use EMF's config > Tools > Export models "
+                    + "to log this model's real part names.");
         }
 
         return saved;
@@ -462,6 +499,18 @@ public final class OptionalEmfCompat {
             }
         }
         saved.add(PartState.capture(part));
+    }
+
+    /**
+     * Returns true when EMF owns this model instance, even while EMF's custom animations are
+     * temporarily paused by Better Mob Combat. This must be used for render-path decisions: a
+     * paused EMF model still has EMF's custom hierarchy and must not be rendered part-by-part as a
+     * vanilla model.
+     */
+    public static boolean isEmfModel(EntityModel<?> model) {
+        return initialize()
+                && emfModelInterface != null
+                && emfModelInterface.isInstance(model);
     }
 
     /**
@@ -632,10 +681,12 @@ public final class OptionalEmfCompat {
                     if (!(entity instanceof LivingEntity living)) {
                         return Boolean.FALSE;
                     }
-                    // Pause EMF's animations for exactly as long as Better Combat is driving this
-                    // mob. Everything else about the entity - model, texture, all other mobs -
-                    // is untouched.
-                    return EmbeddedPlayerAnimator.isAnimating(living);
+                    // Do not pause the entire Fresh Animations model for illagers. Their visible
+                    // lower legs are child CEM bones that depend on EMF's animation pass; freezing
+                    // the whole entity makes those children collapse upward during an attack.
+                    // Illagers are handled by the selective arm-tree pause in pause(...).
+                    return EmbeddedPlayerAnimator.isAnimating(living)
+                            && !(living instanceof AbstractIllager);
                 } catch (RuntimeException exception) {
                     return Boolean.FALSE;
                 }
@@ -652,9 +703,10 @@ public final class OptionalEmfCompat {
     }
 
     /** Resolves the vanilla Entity behind EMF's EMFEntity wrapper, whatever it names its accessor. */
-    private static Entity entityFromEmfEntity(Object emfEntity) {        if (emfEntity instanceof Entity direct) {
-        return direct;
-    }
+    private static Entity entityFromEmfEntity(Object emfEntity) {
+        if (emfEntity instanceof Entity direct) {
+            return direct;
+        }
         if (emfEntityAccessor == null) {
             for (Method method : emfEntity.getClass().getMethods()) {
                 if (method.getParameterCount() == 0
