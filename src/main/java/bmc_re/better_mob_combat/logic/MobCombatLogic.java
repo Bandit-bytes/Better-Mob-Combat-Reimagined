@@ -16,10 +16,13 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.phys.AABB;
@@ -44,8 +47,7 @@ public final class MobCombatLogic {
         if (!BMCConfig.ENABLED.get() || mob.level().isClientSide || !mob.isAlive()) {
             return false;
         }
-        ResourceLocation entityId = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
-        if (BMCConfig.ENTITY_BLACKLIST.get().contains(entityId.toString())) {
+        if (BMCConfig.isBlacklisted(mob.getType())) {
             return false;
         }
         return MobAttackSelector.hasCombatWeapon(mob);
@@ -59,8 +61,7 @@ public final class MobCombatLogic {
             return;
         }
 
-        ResourceLocation entityId = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
-        if (BMCConfig.ENTITY_BLACKLIST.get().contains(entityId.toString())) {
+        if (BMCConfig.isBlacklisted(mob.getType())) {
             return;
         }
 
@@ -122,9 +123,21 @@ public final class MobCombatLogic {
     public static void tick(Mob mob) {
         MobCombatState state = (MobCombatState) mob;
 
+        // Re-check every tick, not just at beginAttack. Config can be edited live (and a synced
+        // server config can change under us), and a mob that is mid-windup when the mod is turned
+        // off or the type is blacklisted must not still land a multi-target Better Combat hit.
+        if (!BMCConfig.ENABLED.get() || BMCConfig.isBlacklisted(mob.getType())) {
+            if (state.bmc$getPendingAttack() != null) {
+                cancelPending(state);
+            }
+            return;
+        }
+
         if (state.bmc$getAttackCooldown() > 0) {
             state.bmc$setAttackCooldown(state.bmc$getAttackCooldown() - 1);
         }
+
+        syncBrainAttackCooldown(mob, state);
 
         if (state.bmc$getComboResetTicks() > 0) {
             state.bmc$setComboResetTicks(state.bmc$getComboResetTicks() - 1);
@@ -181,6 +194,34 @@ public final class MobCombatLogic {
         state.bmc$setComboResetTicks(BMCConfig.COMBO_RESET_TICKS.get());
     }
 
+    /**
+     * Brain-driven mobs (piglins, piglin brutes, hoglins) do not use MeleeAttackGoal at all - they
+     * run the {@code MeleeAttack} behavior, which paces itself with the ATTACK_COOLING_DOWN memory and a
+     * hardcoded cooldown. MeleeAttackGoalMixin therefore never touches them, and every interval
+     * option in this config used to be silently inert for them.
+     *
+     * <p>Rather than mixing into the lambda inside {@code MeleeAttack#create} (where the cooldown is
+     * a captured local), just keep ATTACK_COOLING_DOWN pinned to our own remaining recovery for as long
+     * as an attack is in flight or cooling down. The behavior writes its own value right after
+     * {@code doHurtTarget} returns; we overwrite it on the following tick and every tick after, so
+     * ours is what actually gates the next swing. Once our timers hit zero we stop writing and the
+     * memory expires normally.</p>
+     */
+    private static void syncBrainAttackCooldown(Mob mob, MobCombatState state) {
+        Brain<?> brain = mob.getBrain();
+        if (!brain.checkMemory(MemoryModuleType.ATTACK_COOLING_DOWN, MemoryStatus.REGISTERED)) {
+            return;
+        }
+
+        int busy = state.bmc$getAttackCooldown();
+        if (state.bmc$getPendingAttack() != null) {
+            busy = Math.max(busy, state.bmc$getAttackStartDelayTicks() + state.bmc$getWindupTicks());
+        }
+        if (busy > 0) {
+            brain.setMemoryWithExpiry(MemoryModuleType.ATTACK_COOLING_DOWN, true, busy);
+        }
+    }
+
     public static int attackIntervalForCurrentWeapon(Mob mob) {
         MobCombatState state = (MobCombatState) mob;
         AttackHand hand = MobAttackSelector.select(mob, state.bmc$getComboCount());
@@ -216,21 +257,23 @@ public final class MobCombatLogic {
         int interval = MobCombatMath.attackIntervalTicks(mob, hand);
 
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(hand.itemStack().getItem());
-        String diagnosticKey = itemId + "|" + hand.attack().animation() + "|" + hand.isOffHand()
-                + "|" + hand.attributes().isTwoHanded();
-        if (ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
-            BetterMobCombatReimagined.LOGGER.info(
-                    "[BMC attack send diagnostic] mob={} item={} animation={} offHand={} twoHanded={} "
-                            + "lengthTicks={} animationUpswing={} damageUpswing={}",
-                    mob.getType(),
-                    itemId,
-                    hand.attack().animation(),
-                    hand.isOffHand(),
-                    hand.attributes().isTwoHanded(),
-                    animationLength,
-                    MobCombatMath.animationUpswing(hand),
-                    MobCombatMath.synchronizedDamageUpswing(mob, hand)
-            );
+        if (BMCConfig.DEBUG_LOGGING.get()) {
+            String diagnosticKey = itemId + "|" + hand.attack().animation() + "|" + hand.isOffHand()
+                    + "|" + hand.attributes().isTwoHanded();
+            if (ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
+                BetterMobCombatReimagined.LOGGER.info(
+                        "[BMC attack send diagnostic] mob={} item={} animation={} offHand={} twoHanded={} "
+                                + "lengthTicks={} animationUpswing={} damageUpswing={}",
+                        mob.getType(),
+                        itemId,
+                        hand.attack().animation(),
+                        hand.isOffHand(),
+                        hand.attributes().isTwoHanded(),
+                        animationLength,
+                        MobCombatMath.animationUpswing(hand),
+                        MobCombatMath.synchronizedDamageUpswing(mob, hand)
+                );
+            }
         }
         state.bmc$setAttackCooldown(interval + BMCConfig.ADDITIONAL_ATTACK_COOLDOWN.get());
         state.bmc$setWindupTicks(MobCombatMath.impactTick(mob, hand));

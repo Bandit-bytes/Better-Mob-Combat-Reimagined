@@ -20,9 +20,10 @@ public final class CommonEvents {
     }
 
     public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
-        if (event.getLevel().isClientSide
-                || !BMCConfig.ENABLED.get()
-                || !BMCConfig.ENABLE_RANGED_ANIMATIONS.get()) {
+        // enableRangedAnimations is a CLIENT option now: whether to *play* the release animation is
+        // a per-player cosmetic choice, so the server always broadcasts the release and the client
+        // decides. The server's job here is only the authoritative gate - master switch + blacklist.
+        if (event.getLevel().isClientSide || !BMCConfig.ENABLED.get()) {
             return;
         }
         if (!(event.getEntity() instanceof Projectile projectile)) {
@@ -31,6 +32,12 @@ public final class CommonEvents {
 
         Entity owner = projectile.getOwner();
         if (!(owner instanceof Mob mob) || !mob.isAlive()) {
+            return;
+        }
+
+        // Previously missing: a blacklisted skeleton still got the enhanced bow release animation,
+        // because the only blacklist checks lived in the melee path it never entered.
+        if (BMCConfig.isBlacklisted(mob.getType())) {
             return;
         }
 

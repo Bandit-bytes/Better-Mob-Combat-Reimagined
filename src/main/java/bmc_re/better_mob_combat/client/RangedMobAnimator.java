@@ -39,8 +39,20 @@ public final class RangedMobAnimator {
     private RangedMobAnimator() {
     }
 
+    /**
+     * ENABLED and the entity blacklist come from the synced SERVER config, so a server-side blacklist
+     * now actually suppresses these client-side animations. The old code checked neither the blacklist
+     * (so a blacklisted skeleton kept its enhanced bow draw) nor a synced value (so on a dedicated
+     * server the client was reading its own unrelated local COMMON file).
+     */
+    private static boolean isAnimated(LivingEntity entity) {
+        return BMCConfig.ENABLED.get()
+                && BMCConfig.ENABLE_RANGED_ANIMATIONS.get()
+                && !BMCConfig.isBlacklisted(entity.getType());
+    }
+
     public static void triggerRelease(LivingEntity entity, RangedWeaponKind kind, boolean offHand) {
-        if (!BMCConfig.ENABLED.get() || !BMCConfig.ENABLE_RANGED_ANIMATIONS.get()) {
+        if (!isAnimated(entity)) {
             return;
         }
         boolean rightArm = armForHand(entity, offHand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
@@ -49,7 +61,7 @@ public final class RangedMobAnimator {
     }
 
     public static void apply(LivingEntity entity, HumanoidModel<?> model, float partialTick) {
-        if (!BMCConfig.ENABLED.get() || !BMCConfig.ENABLE_RANGED_ANIMATIONS.get()) {
+        if (!isAnimated(entity)) {
             RELEASE_STATES.remove(entity);
             return;
         }

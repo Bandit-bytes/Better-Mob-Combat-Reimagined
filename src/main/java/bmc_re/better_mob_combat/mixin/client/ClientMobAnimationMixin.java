@@ -335,7 +335,13 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         Mob mob = (Mob) (Object) this;
         boolean leftHanded = mob.isLeftHanded();
 
-        if (!BMCConfig.ENABLED.get() || !BMCConfig.ENABLE_WEAPON_IDLE_POSES.get()) {
+        if (!BMCConfig.ENABLED.get()
+                || !BMCConfig.ENABLE_WEAPON_IDLE_POSES.get()
+                // Previously missing entirely: a blacklisted mob still had Better Combat's
+                // two-handed grips and idle stances applied to it, which for anything that never
+                // held an attributed melee weapon was the *only* visible effect of this mod - so
+                // blacklisting it appeared to do nothing at all.
+                || BMCConfig.isBlacklisted(mob.getType())) {
             this.bmc$clearWeaponPoses(leftHanded);
             return;
         }
@@ -365,7 +371,7 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         // Diagnostic output is intentionally one line per distinct held item/result, not every
         // tick. It distinguishes a Better Combat attribute-resolution failure from a model-render
         // overwrite without requiring a debugger.
-        if (!mainHand.isEmpty()) {
+        if (!mainHand.isEmpty() && BMCConfig.DEBUG_LOGGING.get()) {
             ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(mainHand.getItem());
             String diagnosticKey = itemId + "|" + resolvedPoseId + "|" + twoHanded + "|" + (mainPose != null);
             if (BMC$POSE_DIAGNOSTICS.add(diagnosticKey)) {
