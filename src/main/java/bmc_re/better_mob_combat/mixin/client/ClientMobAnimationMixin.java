@@ -216,11 +216,11 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Override
     public boolean bmc$shouldForceAttackItemVisible() {
-        // Conditional illager item layers should release slightly before the final fade frames.
-        // Fresh Animations can return to crossed arms at the tail of the swing; keeping the item
-        // forced for those final frames leaves the axe floating outside the closed hands.
-        return this.bmc$attackVisualTicks > 2
-                && this.bmc$attackAnimation.base.getAnimation() != null;
+        // Keep conditional illager held-item rendering synchronized with arm ownership. Releasing
+        // the axe a few ticks before the Player Animator layer yielded made Fresh Animations close
+        // the hands around empty space, then snap the crossed-arm node back independently. The item
+        // now disappears on the same frame Better Mob Combat actually gives the arms back.
+        return this.bmc$isArmAnimationActive();
     }
 
     @Override
@@ -270,14 +270,13 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             this.bmc$twoHandedAttack = twoHanded;
 
             KeyframeAnimation.AnimationBuilder copy = animation.mutableCopy();
-            copy.torso.fullyEnablePart(true);
             copy.head.pitch.setEnabled(false);
 
             float safeLength = Math.max(1.0F, length);
             // Use the packet's authored total duration for renderer visibility. The animation
             // modifier may remain active briefly while fading out; that must not keep the axe
             // rendered after the Vindicator has already returned to crossed arms.
-            this.bmc$attackVisualTicks = Math.max(1, Mth.ceil(safeLength) + 1);
+            this.bmc$attackVisualTicks = Math.max(1, Mth.ceil(safeLength));
             float sourceUpswing = Mth.clamp(animationUpswing, 0.01F, 0.99F);
             float targetUpswing = Mth.clamp(damageUpswing, 0.01F, 0.99F);
 
@@ -306,10 +305,13 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
             // Better Combat's TWO_HANDED hand is always based on the main-hand animation.
             // Mirroring it as an offhand attack twists polearms and great weapons across the body.
-            boolean mirror = !twoHanded && offHand;
-            if (((Mob) (Object) this).isLeftHanded()) {
-                mirror = !mirror;
-            }
+            // Two-handed Better Combat presets are authored around the main-hand/right-hand
+            // coordinate space. Mob#isLeftHanded is randomized for some mobs (including
+            // Vindicators), but mirroring a complete two-handed animation for that flag swaps the
+            // weapon onto the empty arm and destroys the authored grip. Handedness only mirrors
+            // genuinely one-handed attacks.
+            boolean mirror = !twoHanded
+                    && (offHand ^ ((Mob) (Object) this).isLeftHanded());
             this.bmc$attackAnimation.mirror.setEnabled(mirror);
 
             CustomAnimationPlayer player = new CustomAnimationPlayer(copy.build(), 0);
@@ -401,7 +403,11 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
         // Item channels must remain active even while the mob is moving. Better Combat stores
         // weapon-specific grip rotation/position in rightItem/leftItem, separately from arm poses.
-        this.bmc$mainHandItemPose.setPose(mainPose, leftHanded);
+        // As with attacks, never mirror a two-handed main-hand pose merely because Minecraft
+        // randomly marked this mob left-handed. The animation, item channels and weapon attributes
+        // all describe one main-hand-authored two-handed rig.
+        boolean mirrorMainPose = !twoHanded && leftHanded;
+        this.bmc$mainHandItemPose.setPose(mainPose, mirrorMainPose);
         this.bmc$offHandItemPose.setPose(offHandPose, leftHanded);
 
         // One-handed body poses should not lock the entire mob while walking/crouching. Two-handed
@@ -414,7 +420,7 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             offHandBodyPose = null;
         }
 
-        this.bmc$mainHandBodyPose.setPose(mainBodyPose, leftHanded);
+        this.bmc$mainHandBodyPose.setPose(mainBodyPose, mirrorMainPose);
         this.bmc$offHandBodyPose.setPose(offHandBodyPose, leftHanded);
 
         // Model subclasses (zombies, skeletons, piglins and illagers) run additional arm code after

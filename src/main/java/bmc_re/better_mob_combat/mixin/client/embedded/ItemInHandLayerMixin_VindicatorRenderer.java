@@ -15,7 +15,8 @@ import org.spongepowered.asm.mixin.injection.At;
  * Ported from the original 1.20.1 mod. VindicatorRenderer's anonymous ItemInHandLayer subclass
  * only draws the held item while {@code Vindicator.isAggressive()} is true - a check that lives
  * entirely outside IllagerModel and knows nothing about a Better Combat attack. Force it true
- * whenever our attack animation is actually playing so the axe never vanishes mid-swing.
+ * whenever Better Combat owns the arms so the axe remains aligned through the complete swing,
+ * fade, and return-to-crossed-arms handoff.
  */
 @Mixin(targets = "net/minecraft/client/renderer/entity/VindicatorRenderer$1")
 public abstract class ItemInHandLayerMixin_VindicatorRenderer

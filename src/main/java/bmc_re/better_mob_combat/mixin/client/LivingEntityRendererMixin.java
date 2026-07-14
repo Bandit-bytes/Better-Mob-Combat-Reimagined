@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.client.RangedMobAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
+import bmc_re.better_mob_combat.internal.mobanim.GenericHumanoidModelCompat;
 import bmc_re.better_mob_combat.internal.mobanim.OptionalEmfCompat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.EntityModel;
@@ -28,10 +29,11 @@ import java.util.Set;
  * setup. The embedded Mob Player Animator bridge handles keyframe application, root transforms,
  * bends, subclass overrides, model copying and armor rendering.
  *
- * <p>Fresh Animations/EMF stays fully enabled for every mob at all times here. Compatibility with
- * it is handled entirely by {@link OptionalEmfCompat#pause}, which briefly pauses only the two
- * specific arm bones Better Combat needs to drive during a swing/two-handed grip, and hands control
- * straight back afterward. Nothing here ever forces a vanilla model or vanilla texture fallback.</p>
+ * <p>Fresh Animations/EMF stays installed and keeps its custom geometry and textures. During a
+ * synchronized attack, {@link OptionalEmfCompat} temporarily yields the animated branches and
+ * reapplies Better Combat's keyframes to the exact EMF parts that are actually rendered. Custom
+ * non-Humanoid models use {@link GenericHumanoidModelCompat}. Nothing here forces a vanilla model
+ * or vanilla texture fallback.</p>
  */
 @Mixin(value = LivingEntityRenderer.class, priority = 2000)
 public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extends EntityModel<T>> {
@@ -58,11 +60,12 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
-        if (!(entity instanceof MobAnimationAccess animatedMob)
-                || !(this.model instanceof HumanoidModel<?> humanoidModel)) {
+        if (!(entity instanceof MobAnimationAccess animatedMob)) {
             return;
         }
 
+        // Store the interpolated render time for every animated mob, including custom models that
+        // do not inherit HumanoidModel (for example MCreator/Blockbench humanoids).
         animatedMob.bmc$setRenderPartialTick(partialTick);
 
         if (animatedMob.bmc$isArmAnimationActive()) {
@@ -81,8 +84,10 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             }
         }
 
-        RangedMobAnimator.apply(entity, humanoidModel, partialTick);
-        humanoidModel.hat.copyFrom(humanoidModel.head);
+        if (this.model instanceof HumanoidModel<?> humanoidModel) {
+            RangedMobAnimator.apply(entity, humanoidModel, partialTick);
+            humanoidModel.hat.copyFrom(humanoidModel.head);
+        }
     }
 
     /**
@@ -117,7 +122,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
     }
 
     /**
-     * Pause the EMF arm bones BEFORE the model's setupAnim runs.
+     * Arrange EMF animation ownership BEFORE the model's setupAnim runs.
      *
      * <p>EMF applies its custom CEM animations during setupAnim. Pausing afterwards (e.g. just
      * before renderToBuffer) is too late: EMF has already animated the arm for this frame, and
@@ -126,8 +131,9 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
      * Combat's pose never becomes visible - the weapon is held, sound and damage fire, but the arm
      * plays EMF's animation instead of the authored swing.</p>
      *
-     * <p>Pausing here means EMF simply skips those specific arm bones this frame, leaving head,
-     * legs, torso, idle sway and textures fully under Fresh Animations' control as before.</p>
+     * <p>Non-illager attacks use EMF's whole-animation pause condition for the attack frame, then
+     * reapply active Better Combat channels to EMF's visible tree. Illagers retain selective
+     * upper-body pausing so their custom lower-leg hierarchy can continue running.</p>
      */
     @Inject(
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
@@ -167,6 +173,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             CallbackInfo ci
     ) {
         OptionalEmfCompat.reapplyArms(entity, this.model);
+        GenericHumanoidModelCompat.apply(entity, this.model, partialTick);
         bmc$logLegsOnce(entity);
     }
 

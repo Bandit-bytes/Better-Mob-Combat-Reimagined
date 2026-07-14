@@ -25,7 +25,7 @@ public interface MobAnimationAccess {
     /** True when the active Better Combat idle pose or attack explicitly requires both arms. */
     boolean bmc$isTwoHandedArmAnimationActive();
 
-    /** Shorter visual window used only by conditional illager held-item layers. */
+    /** True while conditional illager held-item layers must follow Better Combat arm ownership. */
     boolean bmc$shouldForceAttackItemVisible();
 
     void bmc$playAttackAnimation(

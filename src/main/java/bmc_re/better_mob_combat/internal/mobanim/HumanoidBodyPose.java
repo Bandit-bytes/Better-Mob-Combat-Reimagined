@@ -53,17 +53,40 @@ public final class HumanoidBodyPose {
     }
 
     public void apply(HumanoidModelAccess model) {
+        applyHead(model);
+        applyBody(model);
+        applyArms(model);
+        applyLegs(model);
+    }
+
+    /** Restores only the baked head anchor, leaving FA's body and locomotion untouched. */
+    public void applyHead(HumanoidModelAccess model) {
         model.bmc$getHead().loadPose(this.headPose);
+        this.headScale.applyTo(model.bmc$getHead());
+    }
+
+    /** Restores only the baked torso anchor before an authored torso channel is applied. */
+    public void applyBody(HumanoidModelAccess model) {
         model.bmc$getBody().loadPose(this.bodyPose);
+        this.bodyScale.applyTo(model.bmc$getBody());
+    }
+
+    /**
+     * Restores both arm anchors together. Fresh Animations can keep the non-weapon illager arm in
+     * its aggressive raised pose; resetting both arms before the final BMC pass prevents that stale
+     * FA pose from surviving beside a one-handed or two-handed Better Combat grip.
+     */
+    public void applyArms(HumanoidModelAccess model) {
         model.bmc$getLeftArm().loadPose(this.leftArmPose);
         model.bmc$getRightArm().loadPose(this.rightArmPose);
-        model.bmc$getLeftLeg().loadPose(this.leftLegPose);
-        model.bmc$getRightLeg().loadPose(this.rightLegPose);
-
-        this.headScale.applyTo(model.bmc$getHead());
-        this.bodyScale.applyTo(model.bmc$getBody());
         this.leftArmScale.applyTo(model.bmc$getLeftArm());
         this.rightArmScale.applyTo(model.bmc$getRightArm());
+    }
+
+    /** Restores only the baked leg anchors. */
+    public void applyLegs(HumanoidModelAccess model) {
+        model.bmc$getLeftLeg().loadPose(this.leftLegPose);
+        model.bmc$getRightLeg().loadPose(this.rightLegPose);
         this.leftLegScale.applyTo(model.bmc$getLeftLeg());
         this.rightLegScale.applyTo(model.bmc$getRightLeg());
     }
