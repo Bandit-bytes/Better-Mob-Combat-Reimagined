@@ -2,7 +2,6 @@ package bmc_re.better_mob_combat.internal.mobanim;
 
 import net.minecraft.client.model.geom.ModelPart;
 
-/** Internal humanoid part access used by the embedded Mob Player Animator bridge. */
 public interface HumanoidModelAccess {
     ModelPart bmc$getHead();
 

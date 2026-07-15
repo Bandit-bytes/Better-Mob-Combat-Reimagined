@@ -43,11 +43,37 @@ public final class GenericHumanoidModelCompat {
     private GenericHumanoidModelCompat() {
     }
 
+    /**
+     * Returns whether a renderer model has a complete player-style humanoid skeleton.
+     *
+     * <p>This deliberately uses a strict check for generic models. Several vanilla non-humanoids
+     * expose parts named {@code head} or {@code body}; treating a single matching name as proof of
+     * humanoid compatibility lets a punch animation move only that part. Spiders are the clearest
+     * example: their head becomes detached while the rest of the model keeps its normal pose.</p>
+     */
+    public static boolean supportsModel(EntityModel<?> model) {
+        if (model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>) {
+            return true;
+        }
+
+        // Vanilla has several creature-specific models with humanoid-looking field names (most
+        // notably IronGolemModel). Their pivots and authored attack poses are not player-model
+        // compatible, so the reflective adapter is reserved for third-party custom models.
+        Package modelPackage = model.getClass().getPackage();
+        if (modelPackage != null && modelPackage.getName().startsWith("net.minecraft.client.model")) {
+            return false;
+        }
+
+        return BINDINGS.computeIfAbsent(model, GenericHumanoidModelCompat::resolve)
+                .hasCompleteHumanoidSkeleton();
+    }
+
     public static void apply(LivingEntity entity, EntityModel<?> model, float partialTick) {
         if (!(entity instanceof MobAnimationAccess access)
                 || model instanceof HumanoidModel<?>
                 || model instanceof IllagerModel<?>
-                || OptionalEmfCompat.isEmfModel(model)) {
+                || OptionalEmfCompat.isEmfModel(model)
+                || !supportsModel(model)) {
             return;
         }
 
@@ -64,7 +90,7 @@ public final class GenericHumanoidModelCompat {
         }
 
         PartBinding binding = BINDINGS.computeIfAbsent(model, GenericHumanoidModelCompat::resolve);
-        if (!binding.hasAny(animated)) {
+        if (!binding.hasCompleteHumanoidSkeleton() || !binding.hasAny(animated)) {
             logMissingOnce(entity, model, animated, binding);
             return;
         }
@@ -317,6 +343,15 @@ public final class GenericHumanoidModelCompat {
                 }
             }
             return false;
+        }
+
+        boolean hasCompleteHumanoidSkeleton() {
+            return parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.HEAD)
+                    && parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.TORSO)
+                    && parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)
+                    && parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)
+                    && parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)
+                    && parts.containsKey(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_LEG);
         }
     }
 }

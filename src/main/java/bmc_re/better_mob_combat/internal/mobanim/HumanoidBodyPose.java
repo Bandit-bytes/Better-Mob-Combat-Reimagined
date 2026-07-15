@@ -3,17 +3,7 @@ package bmc_re.better_mob_combat.internal.mobanim;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
 
-/**
- * Stores the baked pivots for a humanoid model. Player Animator keyframes can move pivots and
- * scale parts, so every setup pass must begin from the model's own baked pose rather than hard-coded
- * player coordinates. This is especially important for skeletons, zombies and armor models.
- *
- * <p>{@link PartPose} only captures position and rotation. It does not capture scale. Some shared
- * Better Combat attack animations include a scale keyframe on the arm (for visual effect on the
- * player model), and without also resetting scale here, that shrink would persist indefinitely
- * after the animation ends instead of only lasting for the duration of the keyframe - most visibly
- * as a mob's held weapon appearing to shrink away and never return after a swing.</p>
- */
+
 public final class HumanoidBodyPose {
     private final PartPose headPose;
     private final PartPose bodyPose;
@@ -59,23 +49,16 @@ public final class HumanoidBodyPose {
         applyLegs(model);
     }
 
-    /** Restores only the baked head anchor, leaving FA's body and locomotion untouched. */
     public void applyHead(HumanoidModelAccess model) {
         model.bmc$getHead().loadPose(this.headPose);
         this.headScale.applyTo(model.bmc$getHead());
     }
 
-    /** Restores only the baked torso anchor before an authored torso channel is applied. */
     public void applyBody(HumanoidModelAccess model) {
         model.bmc$getBody().loadPose(this.bodyPose);
         this.bodyScale.applyTo(model.bmc$getBody());
     }
 
-    /**
-     * Restores both arm anchors together. Fresh Animations can keep the non-weapon illager arm in
-     * its aggressive raised pose; resetting both arms before the final BMC pass prevents that stale
-     * FA pose from surviving beside a one-handed or two-handed Better Combat grip.
-     */
     public void applyArms(HumanoidModelAccess model) {
         model.bmc$getLeftArm().loadPose(this.leftArmPose);
         model.bmc$getRightArm().loadPose(this.rightArmPose);
@@ -83,7 +66,6 @@ public final class HumanoidBodyPose {
         this.rightArmScale.applyTo(model.bmc$getRightArm());
     }
 
-    /** Restores only the baked leg anchors. */
     public void applyLegs(HumanoidModelAccess model) {
         model.bmc$getLeftLeg().loadPose(this.leftLegPose);
         model.bmc$getRightLeg().loadPose(this.rightLegPose);

@@ -248,7 +248,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         }
 
         String diagnosticKey = id + "|" + offHand + "|" + twoHanded;
-        if (BMC$ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
+
+        if (BMCConfig.DEBUG_LOGGING.get()
+                && BMC$ATTACK_DIAGNOSTICS.add(diagnosticKey)) {
             BetterMobCombatReimagined.LOGGER.info(
                     "[BMC attack receive diagnostic] mob={} animation={} animationFound=true "
                             + "offHand={} twoHanded={} packetLengthTicks={} sourceEndTick={}",
@@ -262,10 +264,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         }
 
         try {
-            // The vanilla swing flag is intentionally suppressed by the server combat mixin, so
-            // clear Better Combat's idle grip explicitly before starting the high-priority attack.
-            // Otherwise the idle item transform and the attack item transform stack together and
-            // Fresh Animations makes the held axe appear to corkscrew around the arm.
             this.bmc$clearWeaponPoses(((Mob) (Object) this).isLeftHanded());
             this.bmc$twoHandedAttack = twoHanded;
 
@@ -273,17 +271,9 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             copy.head.pitch.setEnabled(false);
 
             float safeLength = Math.max(1.0F, length);
-            // Use the packet's authored total duration for renderer visibility. The animation
-            // modifier may remain active briefly while fading out; that must not keep the axe
-            // rendered after the Vindicator has already returned to crossed arms.
             this.bmc$attackVisualTicks = Math.max(1, Mth.ceil(safeLength));
             float sourceUpswing = Mth.clamp(animationUpswing, 0.01F, 0.99F);
             float targetUpswing = Mth.clamp(damageUpswing, 0.01F, 0.99F);
-
-            // Visual-only fine adjustment: shift exactly where in the client's playback the swing
-            // appears to reach its hit pose, without touching the server's damage timing at all
-            // (that's locked to whole ticks and isn't adjustable more finely than that). Expressed in
-            // ticks so it reads intuitively next to the rest of this mod's tick-based timing.
             float nudgeTicks = BMCConfig.CLIENT_HIT_TIMING_NUDGE_TICKS.get().floatValue();
             if (nudgeTicks != 0.0F) {
                 targetUpswing = Mth.clamp(targetUpswing + nudgeTicks / safeLength, 0.01F, 0.99F);
@@ -292,9 +282,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             float baseSpeed = Math.max(0.01F, (float) animation.endTick / safeLength);
             float upswingSpeed = Math.max(0.01F, baseSpeed * sourceUpswing / targetUpswing);
             float downwindSpeed = Math.max(0.01F, baseSpeed * (1.0F - sourceUpswing) / (1.0F - targetUpswing));
-
-            // Reach the animation's original tipping point exactly when the server applies damage,
-            // then consume the remaining keyframes over the rest of the weapon cooldown.
             this.bmc$attackAnimation.speed.set(
                     upswingSpeed,
                     List.of(
@@ -303,25 +290,12 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
                     )
             );
 
-            // Better Combat's TWO_HANDED hand is always based on the main-hand animation.
-            // Mirroring it as an offhand attack twists polearms and great weapons across the body.
-            // Two-handed Better Combat presets are authored around the main-hand/right-hand
-            // coordinate space. Mob#isLeftHanded is randomized for some mobs (including
-            // Vindicators), but mirroring a complete two-handed animation for that flag swaps the
-            // weapon onto the empty arm and destroys the authored grip. Handedness only mirrors
-            // genuinely one-handed attacks.
             boolean mirror = !twoHanded
                     && (offHand ^ ((Mob) (Object) this).isLeftHanded());
             this.bmc$attackAnimation.mirror.setEnabled(mirror);
 
             CustomAnimationPlayer player = new CustomAnimationPlayer(copy.build(), 0);
             player.setFirstPersonMode(FirstPersonMode.NONE);
-            // Blending in from the idle pose takes real time on top of the upswing/downswing speed
-            // math above, which assumes the attack pose is playing at full weight from tick 0. A long
-            // fade-in (e.g. driven by this animation's own beginTick) pushes the visible swing later
-            // than the server's actual damage tick, showing up as "hit sound plays, then the axe
-            // catches up a moment later." Cap it to a couple of ticks - enough to avoid a hard snap
-            // from the idle pose, but small enough not to visibly desync from the impact.
             int fadeIn = Mth.clamp(copy.beginTick, 1, 2);
             this.bmc$attackAnimation.base.replaceAnimationWithFade(
                     AbstractFadeModifier.standardFadeIn(fadeIn, Ease.INOUTSINE),
@@ -339,10 +313,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
         if (!BMCConfig.ENABLED.get()
                 || !BMCConfig.ENABLE_WEAPON_IDLE_POSES.get()
-                // Previously missing entirely: a blacklisted mob still had Better Combat's
-                // two-handed grips and idle stances applied to it, which for anything that never
-                // held an attributed melee weapon was the *only* visible effect of this mod - so
-                // blacklisting it appeared to do nothing at all.
                 || BMCConfig.isBlacklisted(mob.getType())) {
             this.bmc$clearWeaponPoses(leftHanded);
             return;
@@ -370,9 +340,7 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         String resolvedPoseId = mainAttributes == null ? null : mainAttributes.pose();
         KeyframeAnimation mainPose = this.bmc$getPose(resolvedPoseId);
 
-        // Diagnostic output is intentionally one line per distinct held item/result, not every
-        // tick. It distinguishes a Better Combat attribute-resolution failure from a model-render
-        // overwrite without requiring a debugger.
+
         if (!mainHand.isEmpty() && BMCConfig.DEBUG_LOGGING.get()) {
             ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(mainHand.getItem());
             String diagnosticKey = itemId + "|" + resolvedPoseId + "|" + twoHanded + "|" + (mainPose != null);
@@ -389,10 +357,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             }
         }
 
-        // Better Combat disables the offhand while a two-handed weapon is equipped. Mobs do not
-        // have Better Combat's player inventory guard, so an item may still physically exist in the
-        // slot. Never let that item's pose animate the left arm/item channel over a spear, glaive,
-        // claymore, staff, or other two-handed main-hand pose.
         KeyframeAnimation offHandPose = null;
         if (!twoHanded && dualWielding) {
             WeaponAttributes offHandAttributes = WeaponRegistry.getAttributes(offHand);
@@ -401,17 +365,10 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
             );
         }
 
-        // Item channels must remain active even while the mob is moving. Better Combat stores
-        // weapon-specific grip rotation/position in rightItem/leftItem, separately from arm poses.
-        // As with attacks, never mirror a two-handed main-hand pose merely because Minecraft
-        // randomly marked this mob left-handed. The animation, item channels and weapon attributes
-        // all describe one main-hand-authored two-handed rig.
         boolean mirrorMainPose = !twoHanded && leftHanded;
         this.bmc$mainHandItemPose.setPose(mainPose, mirrorMainPose);
         this.bmc$offHandItemPose.setPose(offHandPose, leftHanded);
 
-        // One-handed body poses should not lock the entire mob while walking/crouching. Two-handed
-        // poses remain active because both arms are part of the authored grip.
         KeyframeAnimation mainBodyPose = mainPose;
         KeyframeAnimation offHandBodyPose = offHandPose;
         boolean moving = this.getDeltaMovement().horizontalDistanceSqr() > 0.0009D;
@@ -423,9 +380,6 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
         this.bmc$mainHandBodyPose.setPose(mainBodyPose, mirrorMainPose);
         this.bmc$offHandBodyPose.setPose(offHandBodyPose, leftHanded);
 
-        // Model subclasses (zombies, skeletons, piglins and illagers) run additional arm code after
-        // HumanoidModel. Record that an authored body pose currently owns those channels so their
-        // vanilla one-handed/crossed-arm logic cannot overwrite a two-handed Better Combat preset.
         this.bmc$weaponBodyPoseActive = mainBodyPose != null || offHandBodyPose != null;
         this.bmc$twoHandedWeaponPoseActive = twoHanded && mainBodyPose != null;
     }

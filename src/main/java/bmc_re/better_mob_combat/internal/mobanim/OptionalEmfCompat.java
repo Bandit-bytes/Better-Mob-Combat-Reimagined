@@ -2,6 +2,7 @@ package bmc_re.better_mob_combat.internal.mobanim;
 
 import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobAnimationAccess;
+import bmc_re.better_mob_combat.config.BMCConfig;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.IllagerModel;
@@ -32,16 +33,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.WeakHashMap;
 
-/**
- * Optional Entity Model Features/Fresh Animations bridge.
- *
- * <p>This is the useful part of the original Mob Player Animator EMF integration adapted to the
- * Reimagined single-mod architecture. EMF remains enabled. Immediately before the base model is
- * drawn, this class snapshots every custom part it changes, exposes Fresh Animations' individual
- * attack arm, hides its crossed-arm node, pauses only the bones controlled by Player Animator and
- * reapplies the live arm keyframes. Immediately after the draw, EMF and every saved model value are
- * restored.</p>
- */
 public final class OptionalEmfCompat {
     private static final String EMF_API = "traben.entity_model_features.EMFAnimationApi";
     private static final String EMF_MODEL_INTERFACE = "traben.entity_model_features.models.IEMFModel";
@@ -66,16 +57,11 @@ public final class OptionalEmfCompat {
 
     private static final Set<UUID> PAUSED = new HashSet<>();
     private static final Map<UUID, List<PartState>> SAVED_PARTS = new HashMap<>();
-    /**
-     * Fresh Animations evaluates both visibility and translated leg pivots every frame. EMF's
-     * whole-model pause is required so its Vindicator attack expressions cannot erase BMC's arm
-     * swing, but the same pause leaves the leg branches at their raw exported CEM pivots (inside
-     * the torso) and can hide nested geometry. Preserve the most recent fully evaluated non-attack
-     * visibility state plus the complete left/right leg trees, then reassert them for the short
-     * synchronized attack.
-     *
-     * <p>A weak entity key avoids retaining unloaded Vindicators.</p>
-     */
+
+
+    private static final Set<LivingEntity> HUMANOID_RENDER_PASS =
+            Collections.newSetFromMap(new WeakHashMap<>());
+
     private static final Map<LivingEntity, VindicatorNonArmSnapshot>
             VINDICATOR_NON_ARM_STATE = new WeakHashMap<>();
 
@@ -95,17 +81,19 @@ public final class OptionalEmfCompat {
     }
 
     public static void pause(LivingEntity entity, EntityModel<?> model) {
-        // Better Mob Combat Reimagined only owns animation stacks attached to Mob instances.
-        // Never participate in EMF arbitration for players: FA Player Extension is itself an EMF
-        // player model, and pausing it here freezes its complete idle/locomotion animation graph.
+
         boolean vindicatorCombatOverride = IllagerArmOwnership.suppressesVanillaAttack(entity);
         if (!(entity instanceof MobAnimationAccess) || !initialize()) {
             return;
         }
 
-        // This hook runs before setupAnim. At the first attack frame the EMF tree still contains
-        // the previous, fully evaluated Fresh Animations visibility state, which is exactly what we
-        // need to preserve for its non-arm geometry while the whole animation graph is paused.
+        HUMANOID_RENDER_PASS.remove(entity);
+        if (!GenericHumanoidModelCompat.supportsModel(model)) {
+            return;
+        }
+        HUMANOID_RENDER_PASS.add(entity);
+
+
         if (entity instanceof Vindicator) {
             captureVindicatorNonArmState(entity, model);
         }
@@ -116,12 +104,6 @@ public final class OptionalEmfCompat {
 
         UUID uuid = entity.getUUID();
 
-        // With EMF's pause condition registered, EMF already stops animating this entity for us, so
-        // the per-part animation pausing below is obsolete. The Fresh Animations VISIBILITY mapping
-        // is NOT obsolete though: FA's crossed-arm node is real geometry in its .jem whose
-        // visibility was being driven by FA's own animations. Now that those animations are paused,
-        // that node would sit permanently visible on top of the individual arms - which renders as
-        // a second pair of hands crossed over the chest. Keep exposing/hiding the right parts.
         if (pauseConditionRegistered && shouldPauseWholeEmfModel(entity)) {
             try {
                 restoreSavedParts(SAVED_PARTS.remove(uuid));
@@ -137,7 +119,6 @@ public final class OptionalEmfCompat {
                     return;
                 }
 
-                // Throwaway - we are not pausing individual parts on this path.
                 Set<ModelPart> unused = Collections.newSetFromMap(new IdentityHashMap<>());
                 List<PartState> saved =
                         applyFreshAnimationsArmMapping(entity, model, animated, unused);
@@ -151,7 +132,7 @@ public final class OptionalEmfCompat {
             return;
         }
         try {
-            // Recover safely if another renderer aborted between our BEFORE and AFTER injections.
+
             resumeIfPaused(entity, uuid);
             restoreSavedParts(SAVED_PARTS.remove(uuid));
 
@@ -162,17 +143,12 @@ public final class OptionalEmfCompat {
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated =
                     EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
 
-            // Layer-tree inspection can briefly report no enabled channels during a transition.
-            // The synchronized attack state still tells us which weapon arm must remain controlled.
-            // This applies to any humanoid-family mob EMF augments (illagers, zombies, skeletons,
-            // piglins, etc.), not just Vindicator - any of them can hold a two-handed weapon.
+
             boolean isEmfHumanoid = model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>;
             if (isEmfHumanoid) {
                 bmc$ensureWeaponArms(entity, animated);
             }
-            // Fresh Animations' illager lower-leg hierarchy must keep running during attacks.
-            // The whole-model pause condition collapses those child bones into their base CEM pose,
-            // so illagers selectively yield only the authored upper-body branches to Better Combat.
+
             if (model instanceof IllagerModel<?> && entity instanceof AbstractIllager) {
                 animated.retainAll(EnumSet.of(
                         EmbeddedPlayerAnimator.AnimatedPart.HEAD,
@@ -218,24 +194,16 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * Applies Better Combat's live arm keyframes after every setupAnim/feature pass has run, so the
-     * authored swing is the last thing to touch the arms before the model draws. Called separately
-     * from {@link #pause}, which must run before setupAnim in order to stop EMF animating the arms
-     * in the first place.
-     */
     public static void reapplyArms(LivingEntity entity, EntityModel<?> model) {
         boolean vindicatorCombatOverride = IllagerArmOwnership.suppressesVanillaAttack(entity);
         if (!(entity instanceof MobAnimationAccess)
                 || (!EmbeddedPlayerAnimator.isAnimating(entity) && !vindicatorCombatOverride)
                 || !initialized
-                || !available) {
+                || !available
+                || !GenericHumanoidModelCompat.supportsModel(model)) {
             return;
         }
-        // A registered whole-model pause prevents EMF from overwriting the attack, but some Fresh
-        // Animations models render a rebuilt ModelPart tree rather than the vanilla arm objects that
-        // HumanoidModelMixin updated during setupAnim. Reapply the active channels directly to EMF's
-        // visible root so skeleton-family and other replaced meshes receive the authored swing.
+
         if (pauseConditionRegistered && shouldPauseWholeEmfModel(entity)) {
             reapplyWholePausedEmfAnimation(entity, model);
             return;
@@ -244,12 +212,6 @@ public final class OptionalEmfCompat {
             return;
         }
 
-        // Illagers under Fresh Animations need a dedicated final pass. EMF can render rebuilt arm
-        // branches that are not the same ModelPart objects stored in IllagerModel.leftArm/rightArm.
-        // Applying the animation only to those facade fields leaves FA's visible left arm raised and
-        // can make the complete attack appear absent. Pose the facade from its baked anchors, then
-        // copy the result into EMF's actual rendered arm roots while hiding the real crossed-arms
-        // branch for this frame.
         if (entity instanceof AbstractIllager
                 && model instanceof IllagerModel<?>
                 && reapplyIllagerEmfUpperBody(entity, model)) {
@@ -276,11 +238,8 @@ public final class OptionalEmfCompat {
                 animated
         );
 
-        // Sample the arms across the frames of an actual attack, not one arbitrary frame. A single
-        // one-shot sample can easily land on an idle frame and show a neutral pose that tells us
-        // nothing. Log only while the attack layer is genuinely active, and cap the output.
         boolean attacking = EmbeddedPlayerAnimator.isAttackAnimating(entity);
-        if (attacking && ROT_SAMPLES < 24) {
+        if (BMCConfig.DEBUG_LOGGING.get() && attacking && ROT_SAMPLES < 24) {
             ROT_SAMPLES++;
             ModelPart right = humanoidAccess.bmc$getRightArm();
             ModelPart left = humanoidAccess.bmc$getLeftArm();
@@ -345,18 +304,11 @@ public final class OptionalEmfCompat {
             List<PartState> saved = SAVED_PARTS.computeIfAbsent(
                     entity.getUUID(), ignored -> new ArrayList<>()
             );
-            // FA's current Vindicator model exposes crossed arms as a top-level `arms` branch, not
-            // under body/EMF_body. Reassert visibility here because setup/render expressions can
-            // change it after the earlier pause hook.
+
             setIllagerCrossedArmsVisible(model, root, false, saved);
             setVisible(emfLeftArm, true, saved);
             setVisible(emfRightArm, true, saved);
 
-            // IllagerModelMixin has already applied the live Player Animator processor to the
-            // facade head/body/arms. Transfer those resulting *deltas* into FA's visible CEM roots
-            // instead of applying player-authored absolute pivots directly to CEM parts. This keeps
-            // Fresh Animations' own shoulder locations while making the visible arm and Minecraft's
-            // held-item anchor use the exact same swing.
             if (authored.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
                 ModelPart emfBody = findAliasedPart(root, BODY_NAMES);
                 resetPart(emfBody);
@@ -368,11 +320,6 @@ public final class OptionalEmfCompat {
                 copyPoseDelta(humanoidAccess.bmc$getHead(), emfHead);
             }
 
-            // Always reset both FA arm branches while a BMC-weapon Vindicator is aggressive. During
-            // the ten-tick commitment window there may be no active keyframe player yet; copying the
-            // facade's neutral/walking arm deltas prevents FA's independent raised-left-arm axe pose
-            // from masquerading as an early attack. Once the packet starts, these same facade arms
-            // already contain the authored one- or two-handed Better Combat animation.
             resetPartTree(emfLeftArm);
             resetPartTree(emfRightArm);
             copyPoseDelta(humanoidAccess.bmc$getLeftArm(), emfLeftArm);
@@ -412,7 +359,6 @@ public final class OptionalEmfCompat {
         target.zScale = source.zScale;
     }
 
-    /** Copies animation offsets while preserving the destination CEM part's authored pivot. */
     private static void copyPoseDelta(ModelPart source, ModelPart target) {
         if (source == null || target == null || source == target) {
             return;
@@ -465,19 +411,6 @@ public final class OptionalEmfCompat {
             ModelPart emfRightArm = findAliasedPart(root, RIGHT_ARM_NAMES);
 
             if (entity instanceof Vindicator) {
-                // Fresh Animations' Vindicator legs are multi-part CEM chains whose usable pivots are
-                // produced by EMF expressions every frame. Resetting the head/body/leg trees while the
-                // whole model is paused collapses those child bones into their raw exported pose: the
-                // feet jump into the torso and the head/body separate. The last evaluated FA pose is
-                // already valid and EMF's pause condition preserves it, so leave every non-arm branch
-                // completely untouched. Only the two arm trees are reset and replaced by BMC.
-                //
-                // EMF's whole-model pause also skips FA's visibility expressions. Newer FA revisions
-                // use those expressions to expose nested feet/lower-leg pieces, so merely leaving their
-                // transforms untouched is not enough: the geometry can become hidden for the attack.
-                // Restore the last fully evaluated leg pose and all non-arm visibility before
-                // drawing. This keeps FA's translated leg pivots out of the torso while the graph
-                // is paused for BMC's real weapon swing.
                 restoreVindicatorNonArmState(entity, root);
                 resetPartTree(emfLeftArm);
                 resetPartTree(emfRightArm);
@@ -501,8 +434,6 @@ public final class OptionalEmfCompat {
             ModelPart emfLeftLeg = findAliasedPart(root, LEFT_LEG_NAMES);
             ModelPart emfRightLeg = findAliasedPart(root, RIGHT_LEG_NAMES);
 
-            // Non-illager whole-paused models use vanilla-compatible humanoid pivots, so rebuilding
-            // their un-authored channels remains safe and keeps locomotion alive during attacks.
             resetPartTree(emfHead);
             resetPartTree(emfBody);
             resetPartTree(emfLeftArm);
@@ -561,19 +492,12 @@ public final class OptionalEmfCompat {
 
     private static int ROT_SAMPLES;
 
-    /**
-     * Makes attack-arm ownership explicit. Layer inspection can briefly miss a channel during a
-     * transition, which is especially visible on two-handed attacks. The synchronized mob state is
-     * authoritative: two-handed poses/attacks always own both arms; one-handed attacks own the
-     * mob's dominant weapon arm.
-     */
+
     private static void bmc$ensureWeaponArms(
             LivingEntity entity,
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated
     ) {
-        // Fresh Animations drives illager arms as a coupled rig. Even a one-handed BMC attack must
-        // claim/reset both visible arms; otherwise FA leaves the off hand in its aggressive raised
-        // pose while the weapon arm is controlled by Better Combat.
+
         if (entity instanceof AbstractIllager
                 && IllagerArmOwnership.suppressesVanillaAttack(entity)) {
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
@@ -608,6 +532,7 @@ public final class OptionalEmfCompat {
         } catch (ReflectiveOperationException | RuntimeException exception) {
             warnOnce("Failed to resume Fresh Animations/EMF after an animated mob render", exception);
         } finally {
+            HUMANOID_RENDER_PASS.remove(entity);
             restoreSavedParts(SAVED_PARTS.remove(uuid));
         }
     }
@@ -622,15 +547,7 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * Fresh Animations' humanoid-family mobs (illagers, zombies, skeletons, piglins, etc.) use
-     * hidden individual arms plus, for illagers specifically, a visible crossed-arm hierarchy.
-     * Player Animator and Minecraft's held-item layer both target the individual vanilla arm
-     * anchor. During an authored arm swing/two-handed grip, expose that exact arm - and, only for
-     * illagers, hide the crossed-arm node that would otherwise cover it.
-     *
-     * <p>No leg offsets, torso offsets, model locking or global EMF disabling are used.</p>
-     */
+
     private static List<PartState> applyFreshAnimationsArmMapping(
             LivingEntity entity,
             EntityModel<?> model,
@@ -658,17 +575,12 @@ public final class OptionalEmfCompat {
         boolean right = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         boolean foundAny = false;
 
-        // Resolve the real visible EMF branches rather than assuming the vanilla top-level names.
-        // Fresh Animations' skeleton and third-party CEM models may nest or rename those branches
-        // even though the renderer still exposes a vanilla HumanoidModel facade.
+
         ModelPart emfHead = findAliasedPart(root, HEAD_NAMES);
         ModelPart emfBody = findAliasedPart(root, BODY_NAMES);
         ModelPart emfLeftArm = findAliasedPart(root, LEFT_ARM_NAMES);
         ModelPart emfRightArm = findAliasedPart(root, RIGHT_ARM_NAMES);
 
-        // Two-handed and heavy attacks frequently animate the torso (and sometimes the head) in
-        // addition to both arms. Pause those complete EMF branches too, while deliberately leaving
-        // leg branches under Fresh Animations control unless the authored attack actually keys them.
         if (head && addPartTree(emfHead, partsToPause)) {
             foundAny = true;
         }
@@ -687,9 +599,7 @@ public final class OptionalEmfCompat {
                 foundAny = true;
             }
         }
-        // The crossed-arm hierarchy that needs hiding only exists on illager-family models
-        // (Vindicator, Pillager, Evoker, etc.) - plain humanoid mobs like zombies and skeletons
-        // never have this node, so skip it for them rather than guess at a path that isn't there.
+
         if (isIllager && (left || right)) {
             setIllagerCrossedArmsVisible(model, root, false, saved);
         }
@@ -712,13 +622,7 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * The decisive check: is the ModelPart our animator writes rotations into the SAME OBJECT that
-     * EMF actually renders? EMF rebuilds the model hierarchy, so if the model's own leftArm/rightArm
-     * fields are different instances from the left_arm/right_arm inside EMF's root tree, then every
-     * pose we apply lands on a part that never gets drawn - which looks exactly like "nothing is
-     * animating" while all our state diagnostics still report success.
-     */
+
     private static void dumpIdentityOnce(LivingEntity entity, EntityModel<?> model, ModelPart root) {
         String key = "identity|" + entity.getType();
         if (!DEBUG_LOGGED.add(key)) {
@@ -749,11 +653,7 @@ public final class OptionalEmfCompat {
         );
     }
 
-    /**
-     * Logs this mob's real EMF part hierarchy once per entity type. EMF's CEM part names differ per
-     * model and per pack, so this is the only reliable way to see what a given Fresh Animations
-     * model actually calls its bones instead of assuming.
-     */
+
     @SuppressWarnings("unchecked")
     private static void dumpEmfTreeOnce(LivingEntity entity, ModelPart root) {
         String key = "tree|" + entity.getType();
@@ -798,11 +698,7 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * Pauses the named part and every part beneath it, without assuming anything about how this
-     * pack names its child bones. {@link ModelPart#getAllParts()} yields the part itself plus all
-     * of its descendants.
-     */
+
     private static boolean addPartTree(ModelPart part, Set<ModelPart> partsToPause) {
         if (part == null) {
             return false;
@@ -836,22 +732,14 @@ public final class OptionalEmfCompat {
         saved.add(PartState.capture(part));
     }
 
-    /**
-     * Returns true when EMF owns this model instance, even while EMF's custom animations are
-     * temporarily paused by Better Mob Combat. This must be used for render-path decisions: a
-     * paused EMF model still has EMF's custom hierarchy and must not be rendered part-by-part as a
-     * vanilla model.
-     */
+
     public static boolean isEmfModel(EntityModel<?> model) {
         return initialize()
                 && emfModelInterface != null
                 && emfModelInterface.isInstance(model);
     }
 
-    /**
-     * True when EMF has an animated custom model for this EntityModel, i.e. EMF owns the render
-     * hierarchy and any manual part-by-part rendering we do would fight it.
-     */
+
     public static boolean isEmfAnimatedModel(EntityModel<?> model) {
         if (!initialize()) {
             return false;
@@ -879,15 +767,6 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * Hides every crossed-arm copy that EMF or the vanilla IllagerModel facade may render.
-     *
-     * <p>Fresh Animations revisions do not all expose this geometry through the same object. Some
-     * keep the vanilla {@code IllagerModel.arms} facade and a rebuilt EMF {@code arms} branch at the
-     * same time; hiding only the first alias leaves one close/crossed hand flashing over BMC's
-     * two-handed grip. Descendants are hidden as well because EMF may flatten a child submodel into
-     * a separately rendered wrapper.</p>
-     */
     private static void setIllagerCrossedArmsVisible(
             EntityModel<?> model,
             ModelPart root,
@@ -905,13 +784,7 @@ public final class OptionalEmfCompat {
         }
     }
 
-    /**
-     * EMF commonly prefixes rebuilt CEM parts with {@code EMF_}. Exact alias matching therefore
-     * misses branches such as {@code EMF_arms} or revision-specific names like
-     * {@code arms_rotation2}. Those branches are the source of the rare crossed-hand flash seen
-     * during an otherwise-correct two-handed swing. Match only unsided arm-group names so normal
-     * left/right arm and forearm trees can never be hidden by this fallback.
-     */
+
     private static List<ModelPart> findLikelyCrossedArmParts(ModelPart root) {
         if (root == null) {
             return List.of();
@@ -960,7 +833,7 @@ public final class OptionalEmfCompat {
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Exact aliases and the vanilla IllagerModel facade are still handled by the caller.
+
         }
         return List.copyOf(matches);
     }
@@ -972,10 +845,6 @@ public final class OptionalEmfCompat {
         part.getAllParts().forEach(child -> setVisible(child, visible, saved));
     }
 
-    /**
-     * Captures only Vindicator geometry that BMC does not own. The snapshot is taken before
-     * setupAnim, so on the first attack frame it still represents FA's last fully evaluated model.
-     */
     private static void captureVindicatorNonArmState(
             LivingEntity entity,
             EntityModel<?> model
@@ -996,8 +865,7 @@ public final class OptionalEmfCompat {
             boolean attackActive = entity instanceof MobAnimationAccess access
                     && access.bmc$isAttackAnimationActive();
             if (attackActive && previous != null && previous.root() == root) {
-                // Do not replace the good pre-attack snapshot with values from a frame whose EMF
-                // graph is already paused and whose arm/crossed-arm visibility BMC has modified.
+
                 return;
             }
 
@@ -1018,11 +886,6 @@ public final class OptionalEmfCompat {
                 }
             });
 
-            // The FA Vindicator animates leg translations as well as rotations. When EMF pauses the
-            // whole model, setupAnim can leave these branches at the raw CEM export pivot instead
-            // of their evaluated ty/tx/tz values, which visually pulls the feet into the chest.
-            // Snapshot every descendant of both visible leg roots so custom lower-leg/foot nodes
-            // are preserved without making assumptions about their names.
             Set<ModelPart> legParts = Collections.newSetFromMap(new IdentityHashMap<>());
             addAliasedPartTrees(root, LEFT_LEG_NAMES, legParts);
             addAliasedPartTrees(root, RIGHT_LEG_NAMES, legParts);
@@ -1063,9 +926,6 @@ public final class OptionalEmfCompat {
             return;
         }
 
-        // Restore pose first, then visibility. PartState includes visibility too, but the broader
-        // visibility snapshot is authoritative for non-leg branches and safely reasserts the final
-        // evaluated state after all leg transforms are back in place.
         for (PartState state : snapshot.legStates()) {
             state.restore();
         }
@@ -1073,12 +933,6 @@ public final class OptionalEmfCompat {
         snapshot.visibilityStates().forEach((part, state) -> state.restore(part));
     }
 
-    /**
-     * Whole-model EMF pausing is still necessary for the visible Vindicator arms, but it also stops
-     * FA's locomotion clock. Continue only the two top-level leg roots from the last fully evaluated
-     * FA pose. Pivots, lower-leg geometry and foot visibility remain exactly as FA authored them; a
-     * small phase-correct walk delta prevents the conspicuous frozen-leg slide during the swing.
-     */
     private static void applyVindicatorLegContinuation(
             LivingEntity entity,
             VindicatorNonArmSnapshot snapshot
@@ -1095,8 +949,6 @@ public final class OptionalEmfCompat {
         float walkPosition = entity.walkAnimation.position(partialTick);
         float walkSpeed = Mth.clamp(entity.walkAnimation.speed(partialTick), 0.0F, 1.0F);
 
-        // Use a deliberately restrained stride. The saved FA pose already contains its own knee and
-        // foot shaping; this only advances the upper-leg phase instead of replacing that animation.
         float capturedRight = Mth.cos(snapshot.walkPosition() * 0.6662F)
                 * 0.55F * snapshot.walkSpeed();
         float capturedLeft = Mth.cos(snapshot.walkPosition() * 0.6662F + Mth.PI)
@@ -1104,9 +956,7 @@ public final class OptionalEmfCompat {
         float currentRight = Mth.cos(walkPosition * 0.6662F) * 0.55F * walkSpeed;
         float currentLeft = Mth.cos(walkPosition * 0.6662F + Mth.PI) * 0.55F * walkSpeed;
 
-        // Continue a tiny idle shift as well, so a stationary Vindicator does not become perfectly
-        // rigid for the duration of a long custom swing. Subtract the captured phase to avoid a pop
-        // on the first attack frame.
+
         float currentAge = entity.tickCount + partialTick;
         float idleDelta = (Mth.sin(currentAge * 0.12F)
                 - Mth.sin(snapshot.capturedAge() * 0.12F)) * 0.012F;
@@ -1133,13 +983,11 @@ public final class OptionalEmfCompat {
         if (root == null) {
             return null;
         }
-        // Prefer the actual top-level `arms` branch used by Fresh Animations' illager models.
         try {
             if (root.hasChild("arms")) {
                 return root.getChild("arms");
             }
         } catch (RuntimeException ignored) {
-            // Fall through to normalized recursive aliases for alternate FA/CEM revisions.
         }
         return findAliasedPart(root, CROSSED_ARM_NAMES);
     }
@@ -1344,20 +1192,6 @@ public final class OptionalEmfCompat {
         return available;
     }
 
-    /**
-     * Registers a pause condition with EMF.
-     *
-     * <p>This is the API EMF added explicitly for animation/emote mods (its changelog cites
-     * EmoteCraft, which is built on the same Player Animator library this mod embeds). It is the
-     * correct mechanism for our case.</p>
-     *
-     * <p>Pausing individual model parts cannot work here: EMF re-asserts its own transforms during
-     * its render pass, after every hook we have. Measurements confirmed Better Combat writes a
-     * correct, fully-formed swing into the exact ModelPart EMF renders, immediately before the draw
-     * call - and EMF still discarded it. A registered pause condition instead makes EMF skip
-     * <em>animating</em> the entity for that frame, while its custom model geometry and textures
-     * (i.e. everything Fresh Animations looks like) continue to render normally.</p>
-     */
     private static void registerPauseCondition(Class<?> api) {
         Method register = null;
         for (Method method : api.getMethods()) {
@@ -1382,11 +1216,7 @@ public final class OptionalEmfCompat {
                     if (!(entity instanceof LivingEntity living)) {
                         return Boolean.FALSE;
                     }
-                    // Whole-model pausing is reserved for an actual Better Combat mob attack.
-                    // Weapon idle poses must not freeze Fresh Animations locomotion, and players
-                    // must never be claimed here because FA Player Extension is an EMF player model.
-                    // Illagers still use selective upper-body pausing so their lower-leg CEM bones
-                    // remain animated and do not collapse into the torso.
+
                     return shouldPauseWholeEmfModel(living);
                 } catch (RuntimeException exception) {
                     return Boolean.FALSE;
@@ -1403,27 +1233,13 @@ public final class OptionalEmfCompat {
         }
     }
 
-
-    /**
-     * True only while a non-illager mob is playing a synchronized Better Combat attack.
-     *
-     * <p>Do not key this off {@link EmbeddedPlayerAnimator#isAnimating(LivingEntity)}: that also
-     * includes persistent weapon idle/body poses. Registering those poses as a whole-entity EMF
-     * pause freezes Fresh Animations walking, idling and (for FA Player Extension) the complete
-     * player model. Illagers deliberately stay on the selective branch because their custom lower
-     * legs require EMF to continue evaluating every frame.</p>
-     */
     private static boolean shouldPauseWholeEmfModel(LivingEntity entity) {
-        if (!(entity instanceof MobAnimationAccess access) || !access.bmc$isAttackAnimationActive()) {
+        if (!HUMANOID_RENDER_PASS.contains(entity)
+                || !(entity instanceof MobAnimationAccess access)
+                || !access.bmc$isAttackAnimationActive()) {
             return false;
         }
 
-        // Most illagers remain on selective upper-body pausing because their CEM leg hierarchy needs
-        // continuous evaluation. Vindicator is the exception: Fresh Animations reasserts its
-        // ATTACKING arm expressions after the selective pass, completely erasing BMC's visible swing.
-        // Pause its complete FA animation graph only for the short, synchronized BMC attack packet;
-        // the final pass replaces only the arm branches and preserves FA's last valid head/body/leg
-        // hierarchy instead of rebuilding player-shaped pivots onto the CEM skeleton.
         return !(entity instanceof AbstractIllager) || entity instanceof Vindicator;
     }
 

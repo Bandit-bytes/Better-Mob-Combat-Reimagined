@@ -60,8 +60,7 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
 
-    // Immutable Modrinth Maven coordinates for the exact 1.21.1 builds used by this port.
-    implementation "maven.modrinth:5sy6g3kz:2NyTus6V" // Better Combat 2.3.2+1.21.1-neoforge
+    implementation "maven.modrinth:5sy6g3kz:VhIOvcXP" // Better Combat 2.4.0+1.21.1-neoforge
     implementation "maven.modrinth:gedNE4y2:HJZB6bmA" // playerAnimator 2.0.4+1.21.1-forge
     implementation "me.shedaniel.cloth:cloth-config-neoforge:15.0.130"
 }

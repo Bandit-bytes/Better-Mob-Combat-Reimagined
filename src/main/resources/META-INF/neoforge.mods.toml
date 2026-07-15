@@ -30,7 +30,7 @@ side = "BOTH"
 [[dependencies."${mod_id}"]]
 modId = "bettercombat"
 type = "required"
-versionRange = "[2.3.2,2.4)"
+versionRange = "[2.3.2,2.5)"
 ordering = "AFTER"
 side = "BOTH"
 

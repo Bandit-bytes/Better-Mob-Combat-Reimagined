@@ -20,9 +20,6 @@ public final class CommonEvents {
     }
 
     public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
-        // enableRangedAnimations is a CLIENT option now: whether to *play* the release animation is
-        // a per-player cosmetic choice, so the server always broadcasts the release and the client
-        // decides. The server's job here is only the authoritative gate - master switch + blacklist.
         if (event.getLevel().isClientSide || !BMCConfig.ENABLED.get()) {
             return;
         }
@@ -35,8 +32,6 @@ public final class CommonEvents {
             return;
         }
 
-        // Previously missing: a blacklisted skeleton still got the enhanced bow release animation,
-        // because the only blacklist checks lived in the melee path it never entered.
         if (BMCConfig.isBlacklisted(mob.getType())) {
             return;
         }

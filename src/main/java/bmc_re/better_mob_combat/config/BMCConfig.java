@@ -11,27 +11,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Config for Better Mob Combat: Reimagined.
- *
- * <p>Split into two specs on purpose:</p>
- * <ul>
- *   <li>{@link #SERVER_SPEC} holds everything that decides <em>what actually happens</em> - the master
- *       switch, the entity blacklist and all combat tuning. NeoForge syncs SERVER configs to every
- *       connected client, which is what lets the client-side animation code honour the server's
- *       blacklist. A COMMON config would NOT be synced: each side would silently read its own local
- *       file, so a server-side blacklist could never suppress a client-side pose or bow animation.</li>
- *   <li>{@link #CLIENT_SPEC} holds purely cosmetic, per-player preferences that never affect gameplay.</li>
- * </ul>
- *
- * <p>Note for existing users: SERVER configs live in {@code <world>/serverconfig/}, not {@code config/}.
- * The old {@code better_mob_combat_reimagined-common.toml} is no longer read.</p>
- */
 public final class BMCConfig {
 
-    // ------------------------------------------------------------------
-    // SERVER spec - authoritative, synced to clients
-    // ------------------------------------------------------------------
+
 
     private static final ModConfigSpec.Builder SERVER_BUILDER = new ModConfigSpec.Builder();
 
@@ -127,22 +109,6 @@ public final class BMCConfig {
             .defineInRange("clientHitTimingNudgeTicks", 0.0D, -5.0D, 5.0D);
 
     public static final ModConfigSpec CLIENT_SPEC = CLIENT_BUILDER.build();
-
-    // ------------------------------------------------------------------
-    // Blacklist cache
-    // ------------------------------------------------------------------
-
-    /**
-     * Parsed, normalized view of {@link #ENTITY_BLACKLIST}. Rebuilt from
-     * ModConfigEvent.Loading / ModConfigEvent.Reloading (see BetterMobCombatReimagined), which also
-     * fires on the client when a server pushes its synced config down on login.
-     *
-     * <p>This exists for two reasons. Correctness: the raw config strings are compared as-is by
-     * String.equals in the old code, so "warden" never matched the canonical "minecraft:warden" that
-     * the registry hands back, even though the validator happily accepted it. Performance: the
-     * eligibility check runs from Mob#isWithinMeleeAttackRange, i.e. once per tracked mob per tick,
-     * and the old path allocated a String and did a linear List scan every single call.</p>
-     */
     private static volatile Set<ResourceLocation> blacklistIds = Set.of();
     private static volatile Set<TagKey<EntityType<?>>> blacklistTags = Set.of();
 
@@ -162,8 +128,6 @@ public final class BMCConfig {
                 continue;
             }
             boolean isTag = entry.startsWith("#");
-            // tryParse defaults a namespace-less id to "minecraft", which is exactly the
-            // normalization we want: "warden" and "minecraft:warden" must behave identically.
             ResourceLocation id = ResourceLocation.tryParse(isTag ? entry.substring(1) : entry);
             if (id == null) {
                 continue;
@@ -179,7 +143,6 @@ public final class BMCConfig {
         blacklistTags = Set.copyOf(tags);
     }
 
-    /** True if this entity type must keep vanilla combat and vanilla animations. */
     public static boolean isBlacklisted(EntityType<?> type) {
         Set<ResourceLocation> ids = blacklistIds;
         Set<TagKey<EntityType<?>>> tags = blacklistTags;
@@ -188,8 +151,6 @@ public final class BMCConfig {
         }
 
         if (!ids.isEmpty()) {
-            // getKey can return null for a type that was never registered (some mods build ad-hoc
-            // EntityTypes). The old code called toString() on it unguarded.
             ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
             if (id != null && ids.contains(id)) {
                 return true;

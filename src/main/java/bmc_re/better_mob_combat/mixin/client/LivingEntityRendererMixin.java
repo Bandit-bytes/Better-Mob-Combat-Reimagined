@@ -3,8 +3,10 @@ package bmc_re.better_mob_combat.mixin.client;
 import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.client.RangedMobAnimator;
+import bmc_re.better_mob_combat.config.BMCConfig;
 import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.GenericHumanoidModelCompat;
+import bmc_re.better_mob_combat.internal.mobanim.HumanoidModelAccess;
 import bmc_re.better_mob_combat.internal.mobanim.OptionalEmfCompat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.EntityModel;
@@ -24,17 +26,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * Adds the lightweight ranged aiming/recoil adjustments after the concrete mob model completes
- * setup. The embedded Mob Player Animator bridge handles keyframe application, root transforms,
- * bends, subclass overrides, model copying and armor rendering.
- *
- * <p>Fresh Animations/EMF stays installed and keeps its custom geometry and textures. During a
- * synchronized attack, {@link OptionalEmfCompat} temporarily yields the animated branches and
- * reapplies Better Combat's keyframes to the exact EMF parts that are actually rendered. Custom
- * non-Humanoid models use {@link GenericHumanoidModelCompat}. Nothing here forces a vanilla model
- * or vanilla texture fallback.</p>
- */
 @Mixin(value = LivingEntityRenderer.class, priority = 2000)
 public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extends EntityModel<T>> {
     @Unique
@@ -64,16 +55,17 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             return;
         }
 
-        // Store the interpolated render time for every animated mob, including custom models that
-        // do not inherit HumanoidModel (for example MCreator/Blockbench humanoids).
         animatedMob.bmc$setRenderPartialTick(partialTick);
 
-        if (animatedMob.bmc$isArmAnimationActive()) {
+        if (animatedMob.bmc$isArmAnimationActive()
+                && BMCConfig.DEBUG_LOGGING.get()) {
             String diagnosticKey = entity.getType() + "|" + this.model.getClass().getName()
                     + "|" + animatedMob.bmc$isTwoHandedArmAnimationActive();
+
             if (BMC$RENDER_DIAGNOSTICS.add(diagnosticKey)) {
                 BetterMobCombatReimagined.LOGGER.info(
-                        "[BMC render diagnostic] mob={} model={} stackActive={} armOwned={} twoHandedArmOwned={} detectedParts={}",
+                        "[BMC render diagnostic] mob={} model={} stackActive={} armOwned={} "
+                                + "twoHandedArmOwned={} detectedParts={}",
                         entity.getType(),
                         this.model.getClass().getName(),
                         EmbeddedPlayerAnimator.isAnimating(entity),
@@ -90,10 +82,6 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         }
     }
 
-    /**
-     * Player Animator applies root/body translation and rotation from the live mob processor during
-     * setupRotations. This also sets the processor's render partial tick before model setup runs.
-     */
     @Inject(
             method = "setupRotations(Lnet/minecraft/world/entity/LivingEntity;Lcom/mojang/blaze3d/vertex/PoseStack;FFFF)V",
             at = @At("RETURN")
@@ -107,12 +95,10 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             float scale,
             CallbackInfo ci
     ) {
-        // IllagerModel is a HierarchicalModel, not a HumanoidModel: its root part already carries
-        // vanilla's own flip/offset. Applying Player Animator's root transform on top of that
-        // double-applies the inversion and renders the legs upside down, while the limbs - which are
-        // posed in local space - still look correct. Illagers get their pose entirely from
-        // applyToModel in IllagerModelMixin; they must not also take the root transform here.
-        if (entity instanceof Mob && !(this.model instanceof IllagerModel<?>)) {
+
+        if (entity instanceof Mob
+                && !(this.model instanceof IllagerModel<?>)
+                && GenericHumanoidModelCompat.supportsModel(this.model)) {
             EmbeddedPlayerAnimator.applyBodyTransform(
                     EmbeddedPlayerAnimator.getAnimation(entity),
                     poseStack,
@@ -121,20 +107,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         }
     }
 
-    /**
-     * Arrange EMF animation ownership BEFORE the model's setupAnim runs.
-     *
-     * <p>EMF applies its custom CEM animations during setupAnim. Pausing afterwards (e.g. just
-     * before renderToBuffer) is too late: EMF has already animated the arm for this frame, and
-     * since pausing only stops <em>future</em> updates, it re-animates from scratch on every
-     * subsequent frame too. The result is that EMF's own arm motion keeps winning and Better
-     * Combat's pose never becomes visible - the weapon is held, sound and damage fire, but the arm
-     * plays EMF's animation instead of the authored swing.</p>
-     *
-     * <p>Non-illager attacks use EMF's whole-animation pause condition for the attack frame, then
-     * reapply active Better Combat channels to EMF's visible tree. Illagers retain selective
-     * upper-body pausing so their custom lower-leg hierarchy can continue running.</p>
-     */
+
     @Inject(
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
             at = @At("HEAD")
@@ -151,10 +124,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         OptionalEmfCompat.pause(entity, this.model);
     }
 
-    /**
-     * Re-assert Better Combat's arm pose immediately before the base model draws, after every
-     * setupAnim/feature pass has finished touching the limbs.
-     */
+
     @Inject(
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
             at = @At(
@@ -177,15 +147,9 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         bmc$logLegsOnce(entity);
     }
 
-    /**
-     * One-time per mob type: dump the leg pivot AND rotation right before the draw. Legs sitting
-     * inside the torso is a pivot (position) problem, not a rotation problem - so comparing a
-     * vindicator against a zombie (which renders correctly) will show immediately whether the baked
-     * pivots we re-apply every frame match what this model actually expects.
-     */
     @Unique
     private void bmc$logLegsOnce(T entity) {
-        if (!(this.model instanceof bmc_re.better_mob_combat.internal.mobanim.HumanoidModelAccess access)) {
+        if (!(this.model instanceof HumanoidModelAccess access)) {
             return;
         }
         if (!EmbeddedPlayerAnimator.isAnimating(entity)) {
@@ -211,11 +175,6 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         );
     }
 
-    /**
-     * Restore any selective pauses only after the complete living-entity render, including
-     * held-item and armor layers. Fresh Animations remains enabled for every other mob and resumes
-     * for this entity on its next non-BMC render.
-     */
     @Inject(
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
             at = @At("TAIL")

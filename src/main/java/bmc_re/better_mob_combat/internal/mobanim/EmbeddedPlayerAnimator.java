@@ -29,14 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The small render bridge embedded from Mob Player Animator's 1.21.1 implementation.
- *
- * <p>Player Animator already mixes bend support and supplier propagation into every
- * {@code HumanoidModel}. What it does not normally do is attach an animation stack to mobs or feed
- * that stack into non-player models. These helpers perform that missing handoff using Player
- * Animator's own {@link AnimationApplier}, {@link IMutableModel}, and bend APIs.</p>
- */
+
 public final class EmbeddedPlayerAnimator {
     private EmbeddedPlayerAnimator() {
     }
@@ -51,16 +44,10 @@ public final class EmbeddedPlayerAnimator {
         return animation != null && animation.isActive();
     }
 
-    /** Returns true only while Better Mob Combat's high-priority attack layer is playing. */
     public static boolean isAttackAnimating(LivingEntity entity) {
         return entity instanceof MobAnimationAccess access && access.bmc$isAttackAnimationActive();
     }
 
-    /**
-     * Returns true whenever the active Player Animator stack controls either arm. This includes
-     * Better Combat idle weapon poses as well as attacks. Mob-specific model classes often run
-     * their vanilla arm setup after HumanoidModel, so they must not overwrite a two-handed grip.
-     */
     public static boolean isArmAnimating(LivingEntity entity) {
         if (!isAnimating(entity)) {
             return false;
@@ -69,7 +56,6 @@ public final class EmbeddedPlayerAnimator {
         return parts.contains(AnimatedPart.LEFT_ARM) || parts.contains(AnimatedPart.RIGHT_ARM);
     }
 
-    /** Vanilla body channels that may overlap with EMF/Fresh Animations. */
     public enum AnimatedPart {
         HEAD,
         TORSO,
@@ -79,12 +65,6 @@ public final class EmbeddedPlayerAnimator {
         RIGHT_LEG
     }
 
-    /**
-     * Walks Player Animator's active layer tree and returns only channels enabled by the current
-     * keyframe animations. This is the same distinction Mob Player Animator uses for EMF: an idle
-     * pose that controls only the arms must not freeze the legs, and an attack without leg keys must
-     * leave Fresh Animations' walk cycle intact.
-     */
     public static EnumSet<AnimatedPart> getCurrentlyAnimatedParts(LivingEntity entity) {
         EnumSet<AnimatedPart> parts = EnumSet.noneOf(AnimatedPart.class);
         if (!(entity instanceof MobAnimationAccess access)) {
@@ -168,7 +148,6 @@ public final class EmbeddedPlayerAnimator {
             case "leftleg" -> parts.add(AnimatedPart.LEFT_LEG);
             case "rightleg" -> parts.add(AnimatedPart.RIGHT_LEG);
             default -> {
-                // body, item, bend, and custom channels do not correspond to a vanilla limb.
             }
         }
     }
@@ -272,11 +251,6 @@ public final class EmbeddedPlayerAnimator {
         }
     }
 
-    /**
-     * Applies the exact same live processor to the model that Player Animator uses for players.
-     * The supplier is subsequently copied by Player Animator's HumanoidModel mixin to inner/outer
-     * armor models, which keeps rotations, pivots, scale and bend deformation identical.
-     */
     @SuppressWarnings({"rawtypes", "unchecked"})
     public static <T extends HumanoidModelAccess & FirstPersonTracker & IMutableModel> void applyToModel(
             T model,
@@ -305,16 +279,6 @@ public final class EmbeddedPlayerAnimator {
         }
     }
 
-    /**
-     * Final EMF Vindicator pass. Fresh Animations updates its hierarchy after setupAnim, so the
-     * normal model application can be overwritten. Reapply only arm channels immediately before
-     * rendering; never touch the body, head or legs.
-     */
-    /**
-     * Compatibility entry point used by the current IllagerModelMixin. This final render pass is
-     * intentionally limited to the two arm channels so Fresh Animations keeps control of the
-     * Vindicator's body, head and legs. Player Animator safely ignores absent arm keyframes.
-     */
     public static void applyArmsOnlyToModel(
             IllagerModelAccess model,
             @Nullable AnimationApplier animation
