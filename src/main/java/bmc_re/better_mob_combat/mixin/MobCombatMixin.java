@@ -54,6 +54,10 @@ public abstract class MobCombatMixin extends LivingEntity implements MobCombatSt
             cir.setReturnValue(false);
             return;
         }
+        if (MobCombatLogic.beginDelayedFallbackMeleeAttack(mob, target)) {
+            cir.setReturnValue(false);
+            return;
+        }
         MobCombatLogic.playFallbackMeleeAnimation(mob);
     }
 

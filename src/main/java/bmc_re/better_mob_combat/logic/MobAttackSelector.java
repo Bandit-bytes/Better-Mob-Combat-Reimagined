@@ -6,6 +6,7 @@ import net.bettercombat.api.WeaponAttributes;
 import net.bettercombat.logic.WeaponRegistry;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.item.ShieldItem;
 import org.jetbrains.annotations.Nullable;
 
@@ -16,17 +17,28 @@ public final class MobAttackSelector {
     }
 
     public static boolean hasCombatWeapon(LivingEntity entity) {
-        WeaponAttributes attributes = WeaponRegistry.getAttributes(entity.getMainHandItem());
+        ItemStack stack = entity.getMainHandItem();
+        if (stack.getItem() instanceof ProjectileWeaponItem) {
+            return false;
+        }
+        WeaponAttributes attributes = WeaponRegistry.getAttributes(stack);
         return hasAttacks(attributes);
     }
 
     public static boolean isDualWielding(LivingEntity entity) {
+        if (entity.getMainHandItem().getItem() instanceof ProjectileWeaponItem
+                || entity.getOffhandItem().getItem() instanceof ProjectileWeaponItem) {
+            return false;
+        }
         WeaponAttributes main = WeaponRegistry.getAttributes(entity.getMainHandItem());
         WeaponAttributes off = WeaponRegistry.getAttributes(entity.getOffhandItem());
         return hasAttacks(main) && !main.isTwoHanded() && hasAttacks(off) && !off.isTwoHanded();
     }
 
     public static boolean isTwoHandedWielding(LivingEntity entity) {
+        if (entity.getMainHandItem().getItem() instanceof ProjectileWeaponItem) {
+            return false;
+        }
         WeaponAttributes main = WeaponRegistry.getAttributes(entity.getMainHandItem());
         return hasAttacks(main) && main.isTwoHanded();
     }
@@ -40,6 +52,9 @@ public final class MobAttackSelector {
         boolean dualWielding = isDualWielding(entity);
         boolean offHand = dualWielding && shouldUseOffHand(entity, comboCount);
         ItemStack stack = offHand ? entity.getOffhandItem() : entity.getMainHandItem();
+        if (stack.getItem() instanceof ProjectileWeaponItem) {
+            return null;
+        }
         WeaponAttributes attributes = WeaponRegistry.getAttributes(stack);
         if (!hasAttacks(attributes)) {
             return null;

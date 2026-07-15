@@ -102,16 +102,18 @@ public final class MobCombatMath {
         double rangeMultiplier = Math.max(0.05F, hand.attack().rangeMultiplier());
 
         double legacyAbsoluteRange = attributes.attackRange();
+        double range;
         if (legacyAbsoluteRange > 0.0D) {
-            return Math.max(0.5D, legacyAbsoluteRange * rangeMultiplier);
+            range = legacyAbsoluteRange * rangeMultiplier;
+        } else {
+            ItemStack stack = hand.itemStack();
+            range = itemHasModifier(stack, Attributes.ENTITY_INTERACTION_RANGE)
+                    ? applyItemModifiers(2.5D, stack, EquipmentSlot.MAINHAND, Attributes.ENTITY_INTERACTION_RANGE)
+                    : 2.5D + attributes.rangeBonus();
+            range *= rangeMultiplier;
         }
 
-        ItemStack stack = hand.itemStack();
-        double range = itemHasModifier(stack, Attributes.ENTITY_INTERACTION_RANGE)
-                ? applyItemModifiers(2.5D, stack, EquipmentSlot.MAINHAND, Attributes.ENTITY_INTERACTION_RANGE)
-                : 2.5D + attributes.rangeBonus();
-
-        return Math.max(0.5D, range * rangeMultiplier);
+        return Math.max(0.5D, range + BMCConfig.ADDITIONAL_ATTACK_RANGE.get());
     }
 
     private static boolean itemHasModifier(ItemStack stack, Holder<Attribute> searchedAttribute) {

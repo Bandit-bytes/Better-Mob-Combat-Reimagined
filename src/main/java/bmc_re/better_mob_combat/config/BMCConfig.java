@@ -25,6 +25,10 @@ public final class BMCConfig {
             .comment("Animate vanilla melee attacks for empty-handed mobs and mobs holding items without Better Combat attributes.")
             .define("enableFallbackMeleeAnimations", true);
 
+    public static final ModConfigSpec.IntValue EMPTY_HANDED_ATTACK_DELAY = SERVER_BUILDER
+            .comment("Ticks between an empty-handed mob starting its attack and dealing damage. Set to 0 for vanilla instant damage.")
+            .defineInRange("emptyHandedAttackDelayTicks", 6, 0, 40);
+
     public static final ModConfigSpec.BooleanValue REQUIRE_LINE_OF_SIGHT = SERVER_BUILDER
             .comment("Require line of sight for every target caught in an attack arc.")
             .define("requireLineOfSight", true);
@@ -41,6 +45,10 @@ public final class BMCConfig {
             .comment("How much of the selected Better Combat attack range is used by the AI reach check. "
                     + "The original 1.20.1 mod used 1.0; the separate start delay lets the mob close distance before the visible swing begins.")
             .defineInRange("attackStartRangeMultiplier", 1.0D, 0.25D, 1.0D);
+
+    public static final ModConfigSpec.DoubleValue ADDITIONAL_ATTACK_RANGE = SERVER_BUILDER
+            .comment("Extra blocks added to Better Combat mob melee reach and hit detection.")
+            .defineInRange("additionalAttackRange", 0.0D, 0.0D, 16.0D);
 
     public static final ModConfigSpec.IntValue ATTACK_START_DELAY = SERVER_BUILDER
             .comment("Ticks between the AI deciding it is in range and the Better Combat upswing beginning. "

@@ -35,10 +35,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 public final class MobCombatLogic {
     private static final ResourceLocation DAMAGE_MODIFIER_ID = BetterMobCombatReimagined.id("attack_damage_multiplier");
     private static final Set<String> ATTACK_DIAGNOSTICS = new LinkedHashSet<>();
+    private static final Map<Mob, PendingFallbackAttack> PENDING_FALLBACK_ATTACKS = new WeakHashMap<>();
 
     private MobCombatLogic() {
     }
@@ -47,7 +49,8 @@ public final class MobCombatLogic {
         if (!BMCConfig.ENABLED.get() || mob.level().isClientSide || !mob.isAlive()) {
             return false;
         }
-        if (BMCConfig.isBlacklisted(mob.getType())) {
+        if (BMCConfig.isBlacklisted(mob.getType())
+                || mob.getMainHandItem().getItem() instanceof ProjectileWeaponItem) {
             return false;
         }
         return MobAttackSelector.hasCombatWeapon(mob);
@@ -84,6 +87,81 @@ public final class MobCombatLogic {
         );
     }
 
+    public static boolean beginDelayedFallbackMeleeAttack(Mob mob, Entity intendedTarget) {
+        int delay = BMCConfig.EMPTY_HANDED_ATTACK_DELAY.get();
+        if (delay <= 0
+                || !BMCConfig.ENABLED.get()
+                || mob.level().isClientSide
+                || !mob.isAlive()
+                || BMCConfig.isBlacklisted(mob.getType())
+                || !mob.getMainHandItem().isEmpty()) {
+            return false;
+        }
+
+        if (PENDING_FALLBACK_ATTACKS.containsKey(mob)) {
+            return true;
+        }
+
+        PENDING_FALLBACK_ATTACKS.put(mob, new PendingFallbackAttack(intendedTarget.getId(), delay));
+        playDelayedFallbackMeleeAnimation(mob, delay);
+        return true;
+    }
+
+    private static void playDelayedFallbackMeleeAnimation(Mob mob, int delay) {
+        if (!BMCConfig.ENABLE_FALLBACK_MELEE_ANIMATIONS.get()) {
+            return;
+        }
+
+        float length = delay + 6.0F;
+        BMCNetwork.sendAttackAnimation(
+                mob,
+                "bettercombat:one_handed_punch",
+                false,
+                false,
+                length,
+                0.5F,
+                delay / length
+        );
+    }
+
+    private static void tickDelayedFallbackMeleeAttack(Mob mob) {
+        PendingFallbackAttack pending = PENDING_FALLBACK_ATTACKS.get(mob);
+        if (pending == null) {
+            return;
+        }
+
+        if (!BMCConfig.ENABLED.get()
+                || !mob.isAlive()
+                || BMCConfig.isBlacklisted(mob.getType())
+                || !mob.getMainHandItem().isEmpty()) {
+            PENDING_FALLBACK_ATTACKS.remove(mob);
+            return;
+        }
+
+        int ticks = pending.ticks() - 1;
+        if (ticks > 0) {
+            PENDING_FALLBACK_ATTACKS.put(mob, new PendingFallbackAttack(pending.targetId(), ticks));
+            return;
+        }
+
+        PENDING_FALLBACK_ATTACKS.remove(mob);
+        Entity target = mob.level().getEntity(pending.targetId());
+        if (!(target instanceof LivingEntity livingTarget)
+                || !livingTarget.isAlive()
+                || !mob.isWithinMeleeAttackRange(livingTarget)
+                || !mob.hasLineOfSight(livingTarget)) {
+            return;
+        }
+
+        MobCombatState state = (MobCombatState) mob;
+        state.bmc$setCallingVanillaAttack(true);
+        try {
+            mob.doHurtTarget(livingTarget);
+        } finally {
+            state.bmc$setCallingVanillaAttack(false);
+        }
+    }
+
     public static boolean beginAttack(Mob mob, Entity intendedTarget) {
         if (!isEligible(mob)) {
             return false;
@@ -99,8 +177,6 @@ public final class MobCombatLogic {
             return false;
         }
 
-        // AI range checks can be stale by the time doHurtTarget is invoked. Revalidate against the
-        // selected combo attack before broadcasting an animation or beginning a windup.
         if (!(intendedTarget instanceof LivingEntity livingTarget)
                 || !validTarget(mob, livingTarget)
                 || !isWithinAttackStartRange(mob, livingTarget, hand)) {
@@ -121,11 +197,9 @@ public final class MobCombatLogic {
     }
 
     public static void tick(Mob mob) {
+        tickDelayedFallbackMeleeAttack(mob);
         MobCombatState state = (MobCombatState) mob;
 
-        // Re-check every tick, not just at beginAttack. Config can be edited live (and a synced
-        // server config can change under us), and a mob that is mid-windup when the mod is turned
-        // off or the type is blacklisted must not still land a multi-target Better Combat hit.
         if (!BMCConfig.ENABLED.get() || BMCConfig.isBlacklisted(mob.getType())) {
             if (state.bmc$getPendingAttack() != null) {
                 cancelPending(state);
@@ -171,16 +245,11 @@ public final class MobCombatLogic {
             if (startDelay > 0) {
                 return;
             }
-            // Begin the visible upswing after the original commitment delay. Do not consume the
-            // first windup tick here: the animation packet starts at this boundary, so waiting the
-            // full impactTick count keeps server damage on the client strike frame.
+
             startPendingAttack(mob, state, pending);
             return;
         }
 
-        // Match the original Better Mob Combat counter semantics: consume one complete
-        // windup tick, then apply damage only after the counter reaches zero. Resolving at
-        // one makes the server hit a frame early, which is especially obvious on fast axes.
         int windup = Math.max(0, state.bmc$getWindupTicks() - 1);
         state.bmc$setWindupTicks(windup);
         if (windup > 0) {
@@ -194,19 +263,6 @@ public final class MobCombatLogic {
         state.bmc$setComboResetTicks(BMCConfig.COMBO_RESET_TICKS.get());
     }
 
-    /**
-     * Brain-driven mobs (piglins, piglin brutes, hoglins) do not use MeleeAttackGoal at all - they
-     * run the {@code MeleeAttack} behavior, which paces itself with the ATTACK_COOLING_DOWN memory and a
-     * hardcoded cooldown. MeleeAttackGoalMixin therefore never touches them, and every interval
-     * option in this config used to be silently inert for them.
-     *
-     * <p>Rather than mixing into the lambda inside {@code MeleeAttack#create} (where the cooldown is
-     * a captured local), just keep ATTACK_COOLING_DOWN pinned to our own remaining recovery for as long
-     * as an attack is in flight or cooling down. The behavior writes its own value right after
-     * {@code doHurtTarget} returns; we overwrite it on the following tick and every tick after, so
-     * ours is what actually gates the next swing. Once our timers hit zero we stop writing and the
-     * memory expires normally.</p>
-     */
     private static void syncBrainAttackCooldown(Mob mob, MobCombatState state) {
         Brain<?> brain = mob.getBrain();
         if (!brain.checkMemory(MemoryModuleType.ATTACK_COOLING_DOWN, MemoryStatus.REGISTERED)) {
@@ -304,8 +360,7 @@ public final class MobCombatLogic {
         if (hitAnything) {
             playConfiguredSound(mob, hand.attack().impactSound());
         }
-        // Match the original mod: a committed attack counts as activity even if the target moved
-        // outside the authored hit shape during the upswing.
+
         mob.setNoActionTime(0);
     }
 
@@ -359,9 +414,6 @@ public final class MobCombatLogic {
             }
         }
 
-        // Preserve the attack-strength ticker exactly as the original Better Mob Combat did.
-        // Some vanilla/enchantment attack paths mutate it while resolving a hit. Letting that
-        // mutation leak into the next combo entry can make a later visual swing deal no damage.
         LivingEntityAttackStrengthAccessor attackStrength = (LivingEntityAttackStrengthAccessor) mob;
         int savedAttackStrengthTicker = attackStrength.bmc$getAttackStrengthTicker();
 
@@ -370,8 +422,6 @@ public final class MobCombatLogic {
                 state.bmc$setWeaponOverride(hand.itemStack());
             }
             attackStrength.bmc$setAttackStrengthTicker(savedAttackStrengthTicker);
-            // Better Combat's fast-attack option bypasses LivingEntity hurt throttling. The original
-            // Better Mob Combat did the same before delegating to the mob's vanilla attack method.
             if (BetterCombatMod.getConfig() != null && BetterCombatMod.getConfig().allow_fast_attacks) {
                 target.invulnerableTime = 0;
             }
@@ -404,6 +454,9 @@ public final class MobCombatLogic {
         mob.level().playSound(null, mob.getX(), mob.getY(), mob.getZ(), sound, mob.getSoundSource(), soundData.volume(), pitch);
     }
 
+    private record PendingFallbackAttack(int targetId, int ticks) {
+    }
+
     private record ModifierBinding(AttributeInstance instance, AttributeModifier modifier) {
         ModifierKey key() {
             return new ModifierKey(this.instance, this.modifier.id());
@@ -413,11 +466,6 @@ public final class MobCombatLogic {
     private record ModifierKey(AttributeInstance instance, ResourceLocation id) {
     }
 
-    /**
-     * Makes an off-hand weapon behave as though it occupied MAINHAND for the duration of the vanilla
-     * mob attack without changing equipment slots. This preserves enchantments and knockback while
-     * avoiding equipment-change events, sounds and client flicker.
-     */
     private static final class AttributeModifierSwap {
         private static final AttributeModifierSwap EMPTY = new AttributeModifierSwap(Set.of(), Map.of());
 
