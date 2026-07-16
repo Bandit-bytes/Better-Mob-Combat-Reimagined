@@ -23,16 +23,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/**
- * Player Animator bridge for modded humanoids whose renderer uses a custom {@link EntityModel}
- * instead of vanilla's {@link HumanoidModel} or {@link IllagerModel}.
- *
- * <p>MCreator/Blockbench mobs commonly still expose familiar head/body/arm/leg ModelParts, but the
- * normal HumanoidModel mixin never sees them. This adapter resolves those parts once per live model
- * instance and applies only the channels currently owned by Better Mob Combat immediately before
- * the model is drawn. It therefore leaves the custom model's idle, walk, cloth and decorative bones
- * alone while allowing its weapon arm(s) to follow the same resource-pack swing as vanilla mobs.</p>
- */
 public final class GenericHumanoidModelCompat {
     private static final Map<EntityModel<?>, PartBinding> BINDINGS =
             Collections.synchronizedMap(new WeakHashMap<>());
@@ -43,22 +33,11 @@ public final class GenericHumanoidModelCompat {
     private GenericHumanoidModelCompat() {
     }
 
-    /**
-     * Returns whether a renderer model has a complete player-style humanoid skeleton.
-     *
-     * <p>This deliberately uses a strict check for generic models. Several vanilla non-humanoids
-     * expose parts named {@code head} or {@code body}; treating a single matching name as proof of
-     * humanoid compatibility lets a punch animation move only that part. Spiders are the clearest
-     * example: their head becomes detached while the rest of the model keeps its normal pose.</p>
-     */
     public static boolean supportsModel(EntityModel<?> model) {
         if (model instanceof HumanoidModel<?> || model instanceof IllagerModel<?>) {
             return true;
         }
 
-        // Vanilla has several creature-specific models with humanoid-looking field names (most
-        // notably IronGolemModel). Their pivots and authored attack poses are not player-model
-        // compatible, so the reflective adapter is reserved for third-party custom models.
         Package modelPackage = model.getClass().getPackage();
         if (modelPackage != null && modelPackage.getName().startsWith("net.minecraft.client.model")) {
             return false;
@@ -151,8 +130,6 @@ public final class GenericHumanoidModelCompat {
         EnumMap<EmbeddedPlayerAnimator.AnimatedPart, String> names =
                 new EnumMap<>(EmbeddedPlayerAnimator.AnimatedPart.class);
 
-        // Generated models generally retain useful field names even when their root hierarchy is
-        // nested under a generic "bone" node, so inspect fields first.
         for (Class<?> type = model.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
             for (Field field : type.getDeclaredFields()) {
                 if (!ModelPart.class.isAssignableFrom(field.getType())) {
@@ -190,7 +167,6 @@ public final class GenericHumanoidModelCompat {
             EnumMap<EmbeddedPlayerAnimator.AnimatedPart, ModelPart> parts,
             EnumMap<EmbeddedPlayerAnimator.AnimatedPart, String> names
     ) {
-        // Prefer HierarchicalModel's public descendant lookup for standard aliases.
         for (Map.Entry<EmbeddedPlayerAnimator.AnimatedPart, String[]> entry : ALIASES.entrySet()) {
             if (parts.containsKey(entry.getKey())) {
                 continue;
@@ -205,9 +181,6 @@ public final class GenericHumanoidModelCompat {
             }
         }
 
-        // Blockbench names can differ only by case, spaces or underscores. Walk the actual children
-        // and compare normalized names to cover RightArm/right_arm/right arm without hard-depending
-        // on another mod's generated model class.
         try {
             Field childrenField = ModelPart.class.getDeclaredField("children");
             childrenField.setAccessible(true);
@@ -234,7 +207,6 @@ public final class GenericHumanoidModelCompat {
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Exact lookup and reflected model fields are still sufficient for most generated mobs.
         }
     }
 
@@ -242,8 +214,7 @@ public final class GenericHumanoidModelCompat {
         if (root.hasChild(name)) {
             return root.getChild(name);
         }
-        // getAnyDescendantWithName is available on HierarchicalModel, not ModelPart; recursively
-        // inspect direct children using the same reflected map used by the fallback resolver.
+
         try {
             Field childrenField = ModelPart.class.getDeclaredField("children");
             childrenField.setAccessible(true);

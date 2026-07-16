@@ -20,7 +20,6 @@ public final class MobCombatMath {
     private MobCombatMath() {
     }
 
-    /** Exact player-style attack duration before integer server-tick quantization. */
     public static float attackDurationTicks(Mob mob, AttackHand hand) {
         double attackSpeed;
         if (!hand.isOffHand() && mob.getAttribute(Attributes.ATTACK_SPEED) != null) {
@@ -30,10 +29,6 @@ public final class MobCombatMath {
         }
         double exactDuration = 20.0D / Math.max(0.1D, attackSpeed);
         double minimum = BMCConfig.MINIMUM_ATTACK_INTERVAL.get();
-
-        // When Better Combat fast attacks are disabled, Minecraft keeps a hurt target invulnerable
-        // for 10 ticks. Starting another visible combo swing sooner guarantees an apparent contact
-        // with no damage. Respect that window instead of playing attacks vanilla will reject.
         if (BetterCombatMod.getConfig() == null || !BetterCombatMod.getConfig().allow_fast_attacks) {
             minimum = Math.max(minimum, 10.0D);
         }
@@ -41,15 +36,10 @@ public final class MobCombatMath {
         return (float) Math.max(minimum, exactDuration);
     }
 
-    /** Match the original mod's rounded whole-tick weapon cooldown. */
     public static int attackIntervalTicks(Mob mob, AttackHand hand) {
         return Math.max(1, Math.round(attackDurationTicks(mob, hand)));
     }
 
-    /**
-     * Match Better Mob Combat 1.20.1: damage is committed when the rounded upswing counter reaches
-     * zero. There is no extra packet/render compensation tick.
-     */
     public static int impactTick(Mob mob, AttackHand hand) {
         float duration = attackDurationTicks(mob, hand);
         int interval = attackIntervalTicks(mob, hand);
@@ -57,7 +47,6 @@ public final class MobCombatMath {
         return Mth.clamp(impact, 1, interval);
     }
 
-    /** Client tipping point corresponding to the exact server impact tick. */
     public static float synchronizedDamageUpswing(Mob mob, AttackHand hand) {
         float duration = attackDurationTicks(mob, hand);
         return Mth.clamp(impactTick(mob, hand) / duration, 0.01F, 0.99F);
@@ -75,10 +64,6 @@ public final class MobCombatMath {
         double rawUpswing = Mth.clamp(hand.attack().upswing(), 0.0D, 1.0D);
         double additional = rawUpswing * BMCConfig.ADDITIONAL_UPSWING_MULTIPLIER.get();
         double configured = hand.upswingRate() + additional;
-        // Never resolve server damage before the animation's authored impact fraction. Current
-        // Better Combat may expose a lower hand upswing rate (for example 0.20 for an axe whose
-        // animation impact is authored at 0.30), which otherwise makes the player take damage
-        // several frames before the visible weapon arrives.
         return (float) Mth.clamp(Math.max(rawUpswing, configured), 0.2D, 1.0D);
     }
 
@@ -87,16 +72,6 @@ public final class MobCombatMath {
         return (float) Mth.clamp(adjustedUpswing(hand) / rawUpswing, 0.2D, 1.0D);
     }
 
-    /**
-     * Adapt Better Combat's current range model to the original Better Mob Combat baseline.
-     *
-     * <p>In the 1.20.1 presets, common weapons authored an absolute 2.5-block attack range. Current
-     * Better Combat presets instead author a range bonus around the player's interaction range. A mob
-     * must not inherit the player's 3.0-block base, but a width-derived fallback is far too short and
-     * erases the weapon preset. Use the original 2.5-block baseline, then apply the current weapon's
-     * interaction-range modifiers or Better Combat range bonus. Legacy/modded absolute ranges remain
-     * authoritative.</p>
-     */
     public static double attackRange(Mob mob, AttackHand hand) {
         WeaponAttributes attributes = hand.attributes();
         double rangeMultiplier = Math.max(0.05F, hand.attack().rangeMultiplier());

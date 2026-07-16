@@ -30,14 +30,6 @@ public final class MobAttackCollision {
 
         AABB targetBox = target.getBoundingBox();
 
-        // Do not create a point-blank dead zone. Better Combat's forward OBB begins at the
-        // attack origin and extends outward. When another entity is pressed into the mob's own
-        // collider, the nearest part of that entity can sit behind the OBB's forward face even
-        // though the entities are physically touching. The vanilla melee goal then repeatedly
-        // asks to attack, receives false, and appears to stop attacking altogether.
-        //
-        // This fallback is deliberately tiny and requires actual collider contact. It does not
-        // increase normal weapon reach or make attacks more forgiving at dodgeable distances.
         if (mob.getBoundingBox().inflate(0.15D, 0.10D, 0.15D).intersects(targetBox)) {
             return true;
         }
@@ -48,8 +40,6 @@ public final class MobAttackCollision {
                 ? WeaponAttributes.HitBoxShape.FORWARD_BOX
                 : attack.hitbox();
 
-        // Use the exact dimensions Better Combat uses for player attacks. The OBB is rotated with
-        // the mob's pitch/yaw, so strafing outside the visual swing can actually avoid the hit.
         Vec3 size = WeaponHitBoxes.createHitbox(hitbox, attackRange, spinAttack);
         OrientedBoundingBox weaponBox = new OrientedBoundingBox(
                 origin,
@@ -63,15 +53,11 @@ public final class MobAttackCollision {
         weaponBox.updateVertex();
 
         Vec3 targetCenter = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
-        // Match the original CollisionFilter behavior: the actual target collider must intersect
-        // the weapon OBB. Do not inflate by pick radius and do not accept center-only containment,
-        // both of which make near misses feel like long-range hits.
+
         if (!weaponBox.intersects(targetBox)) {
             return false;
         }
 
-        // Range is measured to the nearest point of the target collider, not to its center and not
-        // by adding an arbitrary half-width/half-height padding value.
         Vec3 nearestVector = CollisionHelper.distanceVector(origin, target.getBoundingBox());
         if (nearestVector.lengthSqr() > attackRange * attackRange + EPSILON) {
             return false;
@@ -84,12 +70,10 @@ public final class MobAttackCollision {
 
         double maximumDifference = attackAngle * 0.5D;
         Vec3 centerVector = targetCenter.subtract(origin);
-        // Use the nearest point on the collider, matching the radial target test. Checking the
-        // center as an alternate path makes side-steps inside large entity boxes too forgiving.
+
         return angleWithin(nearestVector, weaponBox.axisZ, maximumDifference);
     }
 
-    /** Matches Better Combat's shoulder-height attack origin. */
     private static Vec3 initialTracingPoint(Mob mob) {
         double shoulderOffset = mob.getBbHeight() * 0.15D * mob.getScale();
         return mob.getEyePosition().subtract(0.0D, shoulderOffset, 0.0D);

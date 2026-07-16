@@ -21,15 +21,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Visual-only bridge for modded mobs that bypass vanilla {@link Mob#doHurtTarget(Entity)}.
- *
- * <p>Some custom entities own their complete melee routine. Better Mob Combat's normal server
- * mixin never sees those attacks, but its global vanilla-swing suppression still used to remove
- * their visible swing. This class recognizes that path and broadcasts only a client animation. It
- * never replaces damage, reach, cooldowns, target selection, or special mechanics from the other
- * mod.</p>
- */
+
 public final class ExternalAttackCompat {
     private static final Map<UUID, Long> LAST_VISUAL_TICK = new HashMap<>();
     private static final Map<Class<?>, Boolean> CUSTOM_MELEE_OVERRIDE_CACHE = new ConcurrentHashMap<>();
@@ -51,11 +43,7 @@ public final class ExternalAttackCompat {
         });
     }
 
-    /**
-     * True for custom melee implementations and for the Dreadknight's generated attack path.
-     * The registry-name check keeps this compatibility optional and avoids linking against the
-     * other mod's classes.
-     */
+
     public static boolean needsVisualBridge(Mob mob) {
         ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
         if (id != null) {
@@ -68,8 +56,6 @@ public final class ExternalAttackCompat {
             }
         }
 
-        // Keep the generic path narrow: only custom melee implementations that are actually
-        // holding a Better Combat-resolved weapon should be converted to visual-only mode.
         try {
             return hasCustomMeleeOverride(mob) && MobAttackSelector.hasCombatWeapon(mob);
         } catch (RuntimeException ignored) {
@@ -77,19 +63,15 @@ public final class ExternalAttackCompat {
         }
     }
 
-    /** Called from the swing mixin before BMC suppresses vanilla's arm swing. */
     public static boolean handleSwing(Mob mob, InteractionHand requestedHand) {
         if (!needsVisualBridge(mob) || !play(mob, requestedHand, "swing")) {
             return false;
         }
-        // Treat this mob's original melee method as authoritative. If its override delegates to
-        // Mob#doHurtTarget, the normal BMC injection must not replace the custom hit after this
-        // visual-only packet has already been sent.
+
         ((MobCombatState) mob).bmc$setCallingVanillaAttack(true);
         return true;
     }
 
-    /** Safety net for custom attack procedures that deal direct melee damage without swing(). */
     public static void handleSuccessfulMeleeDamage(Mob mob) {
         if (needsVisualBridge(mob) && !isRecent(mob)) {
             play(mob, InteractionHand.MAIN_HAND, "damage");
@@ -145,7 +127,6 @@ public final class ExternalAttackCompat {
         return true;
     }
 
-    /** True while a custom mob may still call through to super.doHurtTarget after its own swing. */
     public static boolean isRecent(Mob mob) {
         Long tick = LAST_VISUAL_TICK.get(mob.getUUID());
         if (tick == null) {
@@ -159,10 +140,6 @@ public final class ExternalAttackCompat {
         return true;
     }
 
-    /**
-     * Reflects over BMC's already-loaded selector so this optional compatibility bridge does not
-     * add another hard linkage to Better Combat's implementation classes.
-     */
     private static boolean playSelectedBetterCombatAnimation(
             Mob mob,
             int comboCount,

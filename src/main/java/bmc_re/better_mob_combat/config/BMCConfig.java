@@ -93,9 +93,7 @@ public final class BMCConfig {
 
     public static final ModConfigSpec SERVER_SPEC = SERVER_BUILDER.build();
 
-    // ------------------------------------------------------------------
-    // CLIENT spec - cosmetic only, never affects damage or AI
-    // ------------------------------------------------------------------
+    // CLIENT
 
     private static final ModConfigSpec.Builder CLIENT_BUILDER = new ModConfigSpec.Builder();
 
