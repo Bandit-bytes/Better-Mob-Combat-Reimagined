@@ -149,6 +149,9 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
 
     @Unique
     private void bmc$logLegsOnce(T entity) {
+        if (!BMCConfig.DEBUG_LOGGING.get()) {
+            return;
+        }
         if (!(this.model instanceof HumanoidModelAccess access)) {
             return;
         }

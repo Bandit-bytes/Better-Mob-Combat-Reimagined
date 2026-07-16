@@ -588,13 +588,17 @@ public final class OptionalEmfCompat {
             foundAny = true;
         }
         if (left) {
-            setVisible(emfLeftArm, true, saved);
+            if (!entity.isBaby()) {
+                setVisible(emfLeftArm, true, saved);
+            }
             if (addPartTree(emfLeftArm, partsToPause)) {
                 foundAny = true;
             }
         }
         if (right) {
-            setVisible(emfRightArm, true, saved);
+            if (!entity.isBaby()) {
+                setVisible(emfRightArm, true, saved);
+            }
             if (addPartTree(emfRightArm, partsToPause)) {
                 foundAny = true;
             }
@@ -1234,7 +1238,8 @@ public final class OptionalEmfCompat {
     }
 
     private static boolean shouldPauseWholeEmfModel(LivingEntity entity) {
-        if (!HUMANOID_RENDER_PASS.contains(entity)
+        if (entity.isBaby()
+                || !HUMANOID_RENDER_PASS.contains(entity)
                 || !(entity instanceof MobAnimationAccess access)
                 || !access.bmc$isAttackAnimationActive()) {
             return false;
