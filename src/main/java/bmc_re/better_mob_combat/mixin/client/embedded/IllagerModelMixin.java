@@ -20,6 +20,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.AbstractIllager;
+import net.minecraft.world.entity.monster.Vindicator;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -165,62 +166,17 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
     ) {
         var animation = EmbeddedPlayerAnimator.getAnimation(entity);
 
-        if (OptionalEmfCompat.isWaterborne(entity)) {
-            // In water the body owner is someone else: Fresh Animations drives its water
-            // animation off being IN water (vanilla's isSwimming() flag never even sets for a
-            // bobbing mob, which is why gating on it silently did nothing). Writing the full
-            // player-shaped animation here - even with the legs snapshot-restored - left the
-            // torso lunging away from legs pinned to FA's water pose: the visible "legs separate
-            // from the body" bug. Apply only the arm channels; the supplier stays active so the
-            // held-item layer still reads the item transforms.
+        if (entity instanceof Vindicator
+                && OptionalEmfCompat.isEmfModel((EntityModel<?>) (Object) this)) {
+            // EMF/Fresh Animations owns the complete live Vindicator hierarchy. Keep Player
+            // Animator's supplier active for held-item/two-handed transforms, but do not write
+            // head, torso, leg, pivot, position, or scale channels into the EMF facade here.
+            // OptionalEmfCompat overlays the authored arm/torso rotations after FA animates.
             EmbeddedPlayerAnimator.applyArmsOnlyKeepingSupplier(this, animation);
             return;
         }
 
-        if (OptionalEmfCompat.isEmfModel((EntityModel<?>) (Object) this)) {
-            // Keep the complete Better Combat upper-body animation and, critically, keep the
-            // Player Animator supplier active. The held-item renderer reads rightItem/leftItem
-            // transforms through that supplier, and many two-handed attacks also use the torso.
-            //
-            // Fresh Animations must remain in charge of the Vindicator's two-part leg hierarchy,
-            // though. Snapshot the walking/running leg transforms produced by vanilla + EMF,
-            // apply the complete Better Combat animation, then restore only the two leg anchors.
-            // This preserves the authored torso, both arms, hand/item transforms, head motion and
-            // two-handed grip without allowing player-shaped leg keyframes to pull CEM legs into
-            // the torso.
-            float[] leftLegState = bmc$captureTransform(this.leftLeg);
-            float[] rightLegState = bmc$captureTransform(this.rightLeg);
-
-            EmbeddedPlayerAnimator.applyToModel(this, animation);
-
-            bmc$restoreTransform(this.leftLeg, leftLegState);
-            bmc$restoreTransform(this.rightLeg, rightLegState);
-            return;
-        }
-
         EmbeddedPlayerAnimator.applyToModel(this, animation);
-    }
-
-    @Unique
-    private static float[] bmc$captureTransform(ModelPart part) {
-        return new float[] {
-                part.x, part.y, part.z,
-                part.xRot, part.yRot, part.zRot,
-                part.xScale, part.yScale, part.zScale
-        };
-    }
-
-    @Unique
-    private static void bmc$restoreTransform(ModelPart part, float[] state) {
-        part.x = state[0];
-        part.y = state[1];
-        part.z = state[2];
-        part.xRot = state[3];
-        part.yRot = state[4];
-        part.zRot = state[5];
-        part.xScale = state[6];
-        part.yScale = state[7];
-        part.zScale = state[8];
     }
 
     /**

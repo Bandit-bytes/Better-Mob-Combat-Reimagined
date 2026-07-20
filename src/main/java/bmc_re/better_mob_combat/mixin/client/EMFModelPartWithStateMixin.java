@@ -3,7 +3,6 @@ package bmc_re.better_mob_combat.mixin.client;
 import bmc_re.better_mob_combat.internal.mobanim.OptionalEmfCompat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.minecraft.client.model.geom.ModelPart;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
@@ -35,6 +34,6 @@ public abstract class EMFModelPartWithStateMixin {
             int packedColor,
             CallbackInfo ci
     ) {
-        OptionalEmfCompat.reapplyArmsAfterEmfAnimation((ModelPart) (Object) this);
+        OptionalEmfCompat.reapplyArmsAfterEmfAnimation();
     }
 }

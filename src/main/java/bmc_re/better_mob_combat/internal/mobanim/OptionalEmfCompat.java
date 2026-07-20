@@ -111,10 +111,6 @@ public final class OptionalEmfCompat {
         HUMANOID_RENDER_PASS.add(entity);
         beginEmfRender(entity, model);
 
-        if (entity instanceof Vindicator && !isWaterborne(entity)) {
-            captureNonArmState(entity, model);
-        }
-
         if (!EmbeddedPlayerAnimator.isAnimating(entity) && !vindicatorCombatOverride) {
             return;
         }
@@ -157,9 +153,9 @@ public final class OptionalEmfCompat {
                 return;
             }
 
-            // Babies and waterborne Vindicators keep EMF/Fresh Animations fully live. BMC
-            // overlays only their weapon-arm rotations immediately after EMFModelPartRoot.animate(),
-            // so there is no stale pose to pause or restore.
+            // Babies and Vindicators keep EMF/Fresh Animations fully live. BMC overlays only
+            // their combat rotations immediately after EMFModelPartRoot.animate(), so FA never
+            // crosses a pause/resume boundary during an attack.
             if (usesLiveLateArmOverlay(entity)) {
                 return;
             }
@@ -244,7 +240,7 @@ public final class OptionalEmfCompat {
         try {
             Object rootObject = getEmfRootModel.invoke(model);
             if (rootObject instanceof ModelPart root) {
-                ACTIVE_EMF_RENDER.set(new EmfRenderContext(entity, model, root));
+                ACTIVE_EMF_RENDER.set(new EmfRenderContext(entity, model));
             }
         } catch (ReflectiveOperationException | RuntimeException exception) {
             warnOnce("Failed to prepare the EMF render-time arm overlay", exception);
@@ -252,11 +248,15 @@ public final class OptionalEmfCompat {
     }
 
     /** Called by the optional EMF model-part mixin directly after EMF runs its live animation. */
-    public static void reapplyArmsAfterEmfAnimation(ModelPart renderedPart) {
+    public static void reapplyArmsAfterEmfAnimation() {
         EmfRenderContext context = ACTIVE_EMF_RENDER.get();
-        if (context == null || context.applied || context.root != renderedPart) {
+        if (context == null || context.applied) {
             return;
         }
+
+        // Humanoid models render their head/body/limbs as separate EMFModelPartWithState sections.
+        // The first section asks the shared root to animate the entity for this render; requiring
+        // that section itself to be the root meant the late overlay never ran for baby zombies.
         context.applied = true;
         reapplyArms(context.entity, context.model);
     }
@@ -361,8 +361,9 @@ public final class OptionalEmfCompat {
                     : EnumSet.noneOf(EmbeddedPlayerAnimator.AnimatedPart.class);
             EnumSet<EmbeddedPlayerAnimator.AnimatedPart> owned = authored.clone();
             bmc$ensureWeaponArms(entity, owned);
-            if (!owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)
-                    && !owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+            boolean leftOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            boolean rightOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+            if (!leftOwned && !rightOwned) {
                 return false;
             }
 
@@ -375,24 +376,30 @@ public final class OptionalEmfCompat {
             List<PartState> saved = SAVED_PARTS.computeIfAbsent(
                     entity.getUUID(), ignored -> new ArrayList<>()
             );
-
             setIllagerCrossedArmsVisible(model, root, false, saved);
             setVisible(emfLeftArm, true, saved);
             setVisible(emfRightArm, true, saved);
 
-            if (entity instanceof Vindicator && isWaterborne(entity)) {
-                if (!animationActive) {
-                    return false;
+            if (entity instanceof Vindicator) {
+                if (animationActive) {
+                    // Fresh Animations already produced the current-frame walk/swim/idle hierarchy.
+                    // Layer only Better Combat's rotational channels over that live pose. Never
+                    // reset or copy the head, pivots, scale, or legs: those writes caused the head
+                    // hop, leg explosions, and pause/resume stutter on Vindicators.
+                    if (authored.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
+                        ModelPart emfBody = findEmfVanillaPart(root, BODY_NAMES);
+                        applyRotationWithoutBend(animation, "torso", emfBody);
+                    }
+                    applyRotationOnly(animation, "leftArm", emfLeftArm, leftOwned);
+                    applyRotationOnly(animation, "rightArm", emfRightArm, rightOwned);
                 }
 
-                boolean leftOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-                boolean rightOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
-                applyRotationOnly(animation, "leftArm", emfLeftArm, leftOwned);
-                applyRotationOnly(animation, "rightArm", emfRightArm, rightOwned);
-                debugLiveArmOverlayOnce(entity, root, emfLeftArm, emfRightArm, "water-vindicator");
+                debugLiveArmOverlayOnce(entity, root, emfLeftArm, emfRightArm, "live-vindicator");
                 return (leftOwned && emfLeftArm != null) || (rightOwned && emfRightArm != null);
             }
 
+            // Keep the existing paused-part behavior for other illagers. Only Vindicators are
+            // moved to the fully live FA overlay path by this compatibility fix.
             if (authored.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
                 ModelPart emfBody = findAliasedPart(root, BODY_NAMES);
                 resetPart(emfBody);
@@ -463,6 +470,23 @@ public final class OptionalEmfCompat {
                 part,
                 animation.getBend(channel)
         );
+    }
+
+    private static void applyRotationWithoutBend(
+            dev.kosmx.playerAnim.impl.animation.AnimationApplier animation,
+            String channel,
+            ModelPart part
+    ) {
+        if (part == null) {
+            return;
+        }
+
+        dev.kosmx.playerAnim.core.util.Vec3f rotation = animation.get3DTransform(
+                channel,
+                dev.kosmx.playerAnim.api.TransformType.ROTATION,
+                new dev.kosmx.playerAnim.core.util.Vec3f(part.xRot, part.yRot, part.zRot)
+        );
+        part.setRotation(rotation.getX(), rotation.getY(), rotation.getZ());
     }
 
     private static boolean reapplyEmfArmsOnly(LivingEntity entity, EntityModel<?> model) {
@@ -1863,7 +1887,7 @@ public final class OptionalEmfCompat {
     }
 
     private static boolean usesLiveLateArmOverlay(LivingEntity entity) {
-        return entity.isBaby() || (entity instanceof Vindicator && isWaterborne(entity));
+        return entity.isBaby() || entity instanceof Vindicator;
     }
 
     private static boolean shouldPauseWholeEmfModel(LivingEntity entity) {
@@ -1874,13 +1898,14 @@ public final class OptionalEmfCompat {
             return false;
         }
 
-        // Babies and waterborne Vindicators stay fully live in EMF. The optional EMF model-part
-        // mixin overlays only their BMC arm rotations immediately after EMF animates the current
-        // frame, preserving baby shaping and water pivots without cached shoreline state.
-        if (entity instanceof Vindicator && isWaterborne(entity)) {
+        // Babies and all Vindicators stay fully live in EMF. Pausing Fresh Animations for a land
+        // Vindicator caused a visible pause/resume boundary every attack: head hop, unstable legs,
+        // and a slow/stuttered swing. The optional EMF model-part mixin now overlays only BMC's
+        // combat rotations after FA has animated the current frame.
+        if (entity instanceof Vindicator) {
             return false;
         }
-        return !(entity instanceof AbstractIllager) || entity instanceof Vindicator;
+        return !(entity instanceof AbstractIllager);
     }
 
     /** Resolves the vanilla Entity behind EMF's EMFEntity wrapper, whatever it names its accessor. */
@@ -1942,13 +1967,11 @@ public final class OptionalEmfCompat {
     private static final class EmfRenderContext {
         private final LivingEntity entity;
         private final EntityModel<?> model;
-        private final ModelPart root;
         private boolean applied;
 
-        private EmfRenderContext(LivingEntity entity, EntityModel<?> model, ModelPart root) {
+        private EmfRenderContext(LivingEntity entity, EntityModel<?> model) {
             this.entity = entity;
             this.model = model;
-            this.root = root;
         }
     }
 
