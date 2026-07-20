@@ -209,12 +209,12 @@ public final class EmbeddedPlayerAnimator {
         }
 
         Vec3f position = animation.get3DTransform("body", TransformType.POSITION, Vec3f.ZERO);
-        poseStack.translate(position.getX(), position.getY() + 0.7D, position.getZ());
+        poseStack.translate(position.getX().doubleValue(), position.getY().doubleValue() + 0.7D, position.getZ().doubleValue());
 
         Vec3f rotation = animation.get3DTransform("body", TransformType.ROTATION, Vec3f.ZERO);
-        poseStack.mulPose(Axis.ZP.rotation(rotation.getZ()));
-        poseStack.mulPose(Axis.YP.rotation(rotation.getY()));
-        poseStack.mulPose(Axis.XP.rotation(rotation.getX()));
+        poseStack.mulPose(Axis.ZP.rotation(rotation.getZ().floatValue()));
+        poseStack.mulPose(Axis.YP.rotation(rotation.getY().floatValue()));
+        poseStack.mulPose(Axis.XP.rotation(rotation.getX().floatValue()));
         poseStack.translate(0.0D, -0.7D, 0.0D);
     }
 
@@ -277,6 +277,76 @@ public final class EmbeddedPlayerAnimator {
             supplier.set(null);
             resetBends(model);
         }
+    }
+
+    /**
+     * Arms-only variant of {@link #applyToModel}. Keeps the Player Animator supplier active so the
+     * held-item layer still reads the rightItem/leftItem transforms, but never writes the head,
+     * torso or leg channels. Used while another system (vanilla swim rotation or Fresh Animations)
+     * owns the rest of the body - e.g. a swimming Vindicator - where writing player-shaped torso
+     * and leg keyframes visibly detaches the torso from the legs.
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public static <T extends HumanoidModelAccess & FirstPersonTracker & IMutableModel> void applyArmsOnlyKeepingSupplier(
+            T model,
+            @Nullable AnimationApplier animation
+    ) {
+        SetableSupplier supplier = model.getEmoteSupplier();
+        if (animation == null) {
+            supplier.set(null);
+            resetBends(model);
+            return;
+        }
+
+        if (!model.bmc$isFirstPersonNext() && animation.isActive()) {
+            supplier.set(animation);
+            animation.updatePart("leftArm", model.bmc$getLeftArm());
+            animation.updatePart("rightArm", model.bmc$getRightArm());
+        } else {
+            model.bmc$setFirstPersonNext(false);
+            supplier.set(null);
+            resetBends(model);
+        }
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public static <T extends HumanoidModelAccess & FirstPersonTracker & IMutableModel> void applyToBabyModel(
+            T model,
+            @Nullable AnimationApplier animation,
+            boolean armsOnly
+    ) {
+        SetableSupplier supplier = model.getEmoteSupplier();
+
+        // Keep Player Animator's bend-aware custom renderer disabled for babies. Vanilla's
+        // AgeableListModel renderer must remain responsible for the baby head/body scaling.
+        supplier.set(null);
+        resetBends(model);
+
+        if (animation == null || model.bmc$isFirstPersonNext() || !animation.isActive()) {
+            model.bmc$setFirstPersonNext(false);
+            return;
+        }
+
+        if (armsOnly) {
+            // EMF/Fresh Animations owns this baby's visible model tree and keeps animating the
+            // head, torso and legs (that is how FA shapes its babies). EMF may reuse the exact
+            // same ModelPart instances as this facade, so writing head/torso/leg keyframes here
+            // would wipe FA's baby pose and leave a small adult. Only the weapon arms belong to
+            // Better Combat; OptionalEmfCompat mirrors them into EMF's arm branches.
+            animation.updatePart("leftArm", model.bmc$getLeftArm());
+            animation.updatePart("rightArm", model.bmc$getRightArm());
+            return;
+        }
+
+        // The normal model parts still receive the keyframes. OptionalEmfCompat mirrors these
+        // channels into EMF's visible model tree immediately before it is rendered.
+        animation.updatePart("head", model.bmc$getHead());
+        model.bmc$getHat().copyFrom(model.bmc$getHead());
+        animation.updatePart("torso", model.bmc$getBody());
+        animation.updatePart("leftArm", model.bmc$getLeftArm());
+        animation.updatePart("rightArm", model.bmc$getRightArm());
+        animation.updatePart("leftLeg", model.bmc$getLeftLeg());
+        animation.updatePart("rightLeg", model.bmc$getRightLeg());
     }
 
     public static void applyArmsOnlyToModel(

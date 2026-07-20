@@ -69,6 +69,8 @@ public abstract class MobCombatMixin extends LivingEntity implements MobCombatSt
             // Replace vanilla's reach decision instead of only extending it. This lets short-range
             // attacks stay short and makes long weapons use the stricter Better Combat start range.
             cir.setReturnValue(MobCombatLogic.isWithinWeaponRange(mob, target));
+        } else if (MobCombatLogic.isFallbackMeleeCandidate(mob)) {
+            cir.setReturnValue(MobCombatLogic.isWithinFallbackRange(mob, target));
         }
     }
 

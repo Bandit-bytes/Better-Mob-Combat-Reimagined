@@ -26,7 +26,9 @@ public final class BMCConfig {
             .define("enableFallbackMeleeAnimations", true);
 
     public static final ModConfigSpec.IntValue EMPTY_HANDED_ATTACK_DELAY = SERVER_BUILDER
-            .comment("Ticks between an empty-handed mob starting its attack and dealing damage. Set to 0 for vanilla instant damage.")
+            .comment("Ticks between a fallback melee attack starting and dealing damage. This applies to empty hands "
+                    + "and held items without Better Combat attack attributes, such as shovels, hoes, and pickaxes. "
+                    + "Set to 0 for vanilla instant damage.")
             .defineInRange("emptyHandedAttackDelayTicks", 6, 0, 40);
 
     public static final ModConfigSpec.BooleanValue REQUIRE_LINE_OF_SIGHT = SERVER_BUILDER

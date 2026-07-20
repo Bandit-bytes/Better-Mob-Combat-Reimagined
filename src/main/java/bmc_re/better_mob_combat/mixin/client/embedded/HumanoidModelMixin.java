@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.FirstPersonTracker;
 import bmc_re.better_mob_combat.internal.mobanim.HumanoidBodyPose;
 import bmc_re.better_mob_combat.internal.mobanim.HumanoidModelAccess;
+import bmc_re.better_mob_combat.internal.mobanim.OptionalEmfCompat;
 import dev.kosmx.playerAnim.core.impl.AnimationProcessor;
 import dev.kosmx.playerAnim.core.util.SetableSupplier;
 import dev.kosmx.playerAnim.impl.IMutableModel;
@@ -111,7 +112,15 @@ public abstract class HumanoidModelMixin<T extends LivingEntity> extends Ageable
             CallbackInfo ci
     ) {
         if (!((Object) this instanceof PlayerModel<?>)) {
-            EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
+            if (entity.isBaby()) {
+                // When EMF/Fresh Animations is animating this model, FA keeps ownership of the
+                // baby's head/torso/legs and Better Combat only writes the arm channels.
+                boolean emfOwnsBody = OptionalEmfCompat.isEmfAnimatedModel(this);
+                EmbeddedPlayerAnimator.applyToBabyModel(
+                        this, EmbeddedPlayerAnimator.getAnimation(entity), emfOwnsBody);
+            } else {
+                EmbeddedPlayerAnimator.applyToModel(this, EmbeddedPlayerAnimator.getAnimation(entity));
+            }
         }
     }
 

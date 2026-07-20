@@ -39,6 +39,7 @@ import java.util.WeakHashMap;
 
 public final class MobCombatLogic {
     private static final ResourceLocation DAMAGE_MODIFIER_ID = BetterMobCombatReimagined.id("attack_damage_multiplier");
+    private static final double DEFAULT_FALLBACK_ATTACK_REACH = Math.sqrt(2.04F) - 0.6F;
     private static final Set<String> ATTACK_DIAGNOSTICS = new LinkedHashSet<>();
     private static final Map<Mob, PendingFallbackAttack> PENDING_FALLBACK_ATTACKS = new WeakHashMap<>();
 
@@ -90,11 +91,7 @@ public final class MobCombatLogic {
     public static boolean beginDelayedFallbackMeleeAttack(Mob mob, Entity intendedTarget) {
         int delay = BMCConfig.EMPTY_HANDED_ATTACK_DELAY.get();
         if (delay <= 0
-                || !BMCConfig.ENABLED.get()
-                || mob.level().isClientSide
-                || !mob.isAlive()
-                || BMCConfig.isBlacklisted(mob.getType())
-                || !mob.getMainHandItem().isEmpty()) {
+                || !isFallbackMeleeCandidate(mob)) {
             return false;
         }
 
@@ -102,12 +99,59 @@ public final class MobCombatLogic {
             return true;
         }
 
-        PENDING_FALLBACK_ATTACKS.put(mob, new PendingFallbackAttack(intendedTarget.getId(), delay));
-        playDelayedFallbackMeleeAnimation(mob, delay);
+        ItemStack weaponSnapshot = mob.getMainHandItem().copy();
+        PENDING_FALLBACK_ATTACKS.put(
+                mob,
+                new PendingFallbackAttack(intendedTarget.getId(), delay, weaponSnapshot)
+        );
+        playDelayedFallbackMeleeAnimation(mob, weaponSnapshot, delay);
         return true;
     }
 
-    private static void playDelayedFallbackMeleeAnimation(Mob mob, int delay) {
+    public static boolean interceptGoalMeleeAttack(Mob mob, Entity intendedTarget) {
+        if (isEligible(mob)) {
+            beginAttack(mob, intendedTarget);
+            return true;
+        }
+        return beginDelayedFallbackMeleeAttack(mob, intendedTarget);
+    }
+
+    public static boolean isFallbackMeleeCandidate(Mob mob) {
+        if (!BMCConfig.ENABLED.get()
+                || mob.level().isClientSide
+                || !mob.isAlive()
+                || BMCConfig.isBlacklisted(mob.getType())) {
+            return false;
+        }
+
+        ItemStack stack = mob.getMainHandItem();
+        return !(stack.getItem() instanceof ProjectileWeaponItem)
+                && !MobAttackSelector.hasCombatWeapon(mob);
+    }
+
+    public static boolean isWithinFallbackRange(Mob mob, LivingEntity target) {
+        AABB attackBox;
+        Entity vehicle = mob.getVehicle();
+        if (vehicle != null) {
+            AABB vehicleBox = vehicle.getBoundingBox();
+            AABB mobBox = mob.getBoundingBox();
+            attackBox = new AABB(
+                    Math.min(mobBox.minX, vehicleBox.minX),
+                    mobBox.minY,
+                    Math.min(mobBox.minZ, vehicleBox.minZ),
+                    Math.max(mobBox.maxX, vehicleBox.maxX),
+                    mobBox.maxY,
+                    Math.max(mobBox.maxZ, vehicleBox.maxZ)
+            );
+        } else {
+            attackBox = mob.getBoundingBox();
+        }
+
+        double reach = DEFAULT_FALLBACK_ATTACK_REACH + BMCConfig.ADDITIONAL_ATTACK_RANGE.get();
+        return attackBox.inflate(reach, 0.0D, reach).intersects(target.getHitbox());
+    }
+
+    private static void playDelayedFallbackMeleeAnimation(Mob mob, ItemStack weaponSnapshot, int delay) {
         if (!BMCConfig.ENABLE_FALLBACK_MELEE_ANIMATIONS.get()) {
             return;
         }
@@ -115,7 +159,9 @@ public final class MobCombatLogic {
         float length = delay + 6.0F;
         BMCNetwork.sendAttackAnimation(
                 mob,
-                "bettercombat:one_handed_punch",
+                weaponSnapshot.isEmpty()
+                        ? "bettercombat:one_handed_punch"
+                        : "bettercombat:one_handed_slash_horizontal_right",
                 false,
                 false,
                 length,
@@ -133,23 +179,26 @@ public final class MobCombatLogic {
         if (!BMCConfig.ENABLED.get()
                 || !mob.isAlive()
                 || BMCConfig.isBlacklisted(mob.getType())
-                || !mob.getMainHandItem().isEmpty()) {
+                || mob.getMainHandItem().getItem() instanceof ProjectileWeaponItem
+                || !ItemStack.isSameItemSameComponents(mob.getMainHandItem(), pending.weaponSnapshot())) {
             PENDING_FALLBACK_ATTACKS.remove(mob);
             return;
         }
 
         int ticks = pending.ticks() - 1;
         if (ticks > 0) {
-            PENDING_FALLBACK_ATTACKS.put(mob, new PendingFallbackAttack(pending.targetId(), ticks));
+            PENDING_FALLBACK_ATTACKS.put(
+                    mob,
+                    new PendingFallbackAttack(pending.targetId(), ticks, pending.weaponSnapshot())
+            );
             return;
         }
 
         PENDING_FALLBACK_ATTACKS.remove(mob);
         Entity target = mob.level().getEntity(pending.targetId());
         if (!(target instanceof LivingEntity livingTarget)
-                || !livingTarget.isAlive()
-                || !mob.isWithinMeleeAttackRange(livingTarget)
-                || !mob.hasLineOfSight(livingTarget)) {
+                || !validTarget(mob, livingTarget)
+                || !isWithinFallbackRange(mob, livingTarget)) {
             return;
         }
 
@@ -454,7 +503,7 @@ public final class MobCombatLogic {
         mob.level().playSound(null, mob.getX(), mob.getY(), mob.getZ(), sound, mob.getSoundSource(), soundData.volume(), pitch);
     }
 
-    private record PendingFallbackAttack(int targetId, int ticks) {
+    private record PendingFallbackAttack(int targetId, int ticks, ItemStack weaponSnapshot) {
     }
 
     private record ModifierBinding(AttributeInstance instance, AttributeModifier modifier) {

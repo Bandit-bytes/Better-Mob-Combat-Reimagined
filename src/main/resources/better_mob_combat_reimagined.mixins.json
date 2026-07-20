@@ -25,7 +25,8 @@
     "client.embedded.ItemInHandLayerMixin_IllusionerRenderer",
     "client.embedded.ItemInHandLayerMixin_EvokerRenderer",
     "client.ClientMobAnimationMixin",
-    "client.LivingEntityRendererMixin"
+    "client.LivingEntityRendererMixin",
+    "client.EMFModelPartWithStateMixin"
   ],
   "injectors": {
     "defaultRequire": 1

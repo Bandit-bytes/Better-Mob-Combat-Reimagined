@@ -68,7 +68,6 @@ public final class ExternalAttackCompat {
             return false;
         }
 
-        ((MobCombatState) mob).bmc$setCallingVanillaAttack(true);
         return true;
     }
 

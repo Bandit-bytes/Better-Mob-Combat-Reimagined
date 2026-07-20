@@ -97,6 +97,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
     ) {
 
         if (entity instanceof Mob
+                && !entity.isBaby()
                 && !(this.model instanceof IllagerModel<?>)
                 && GenericHumanoidModelCompat.supportsModel(this.model)) {
             EmbeddedPlayerAnimator.applyBodyTransform(
@@ -121,6 +122,9 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
+        if (entity instanceof MobAnimationAccess animatedMob) {
+            animatedMob.bmc$setRenderPartialTick(partialTick);
+        }
         OptionalEmfCompat.pause(entity, this.model);
     }
 
@@ -133,7 +137,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
                     shift = At.Shift.BEFORE
             )
     )
-    private void bmc$reapplyArmsBeforeBaseModel(
+    private void bmc$applyGenericModelBeforeBaseModel(
             T entity,
             float entityYaw,
             float partialTick,
@@ -142,7 +146,6 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
-        OptionalEmfCompat.reapplyArms(entity, this.model);
         GenericHumanoidModelCompat.apply(entity, this.model, partialTick);
         bmc$logLegsOnce(entity);
     }

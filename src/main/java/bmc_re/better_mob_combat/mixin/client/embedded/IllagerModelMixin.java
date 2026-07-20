@@ -113,6 +113,9 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             return false;
         }
 
+        // Note: this.hat is deliberately NOT in this list. In IllagerModel the hat is a child of
+        // the head, so head.render() already draws it; listing it separately rendered it a second
+        // time at head-local coordinates (i.e. floating at the body origin).
         return EmbeddedPlayerAnimator.renderIllagerWithBends(
                 poseStack,
                 vertices,
@@ -126,8 +129,7 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
                         this.rightArm,
                         this.leftArm,
                         this.rightLeg,
-                        this.leftLeg,
-                        this.hat
+                        this.leftLeg
                 )
         );
     }
@@ -162,6 +164,18 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             CallbackInfo ci
     ) {
         var animation = EmbeddedPlayerAnimator.getAnimation(entity);
+
+        if (OptionalEmfCompat.isWaterborne(entity)) {
+            // In water the body owner is someone else: Fresh Animations drives its water
+            // animation off being IN water (vanilla's isSwimming() flag never even sets for a
+            // bobbing mob, which is why gating on it silently did nothing). Writing the full
+            // player-shaped animation here - even with the legs snapshot-restored - left the
+            // torso lunging away from legs pinned to FA's water pose: the visible "legs separate
+            // from the body" bug. Apply only the arm channels; the supplier stays active so the
+            // held-item layer still reads the item transforms.
+            EmbeddedPlayerAnimator.applyArmsOnlyKeepingSupplier(this, animation);
+            return;
+        }
 
         if (OptionalEmfCompat.isEmfModel((EntityModel<?>) (Object) this)) {
             // Keep the complete Better Combat upper-body animation and, critically, keep the

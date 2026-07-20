@@ -96,6 +96,7 @@ public final class MobAttackSelector {
             // equipped. Mirror that rule for mobs even if another mod spawned an item in the slot.
             case NO_OFFHAND_ITEM -> isTwoHandedWielding(entity) || entity.getOffhandItem().isEmpty();
             case OFF_HAND_SHIELD -> !isTwoHandedWielding(entity)
+                    && !isDualWielding(entity)
                     && entity.getOffhandItem().getItem() instanceof ShieldItem;
             case MAIN_HAND_ONLY -> !offHandAttack;
             case OFF_HAND_ONLY -> offHandAttack;
