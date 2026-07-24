@@ -26,6 +26,7 @@
     "client.embedded.ItemInHandLayerMixin_EvokerRenderer",
     "client.ClientMobAnimationMixin",
     "client.LivingEntityRendererMixin",
+    "client.DrownedOuterLayerMixin",
     "client.EMFModelPartWithStateMixin"
   ],
   "injectors": {

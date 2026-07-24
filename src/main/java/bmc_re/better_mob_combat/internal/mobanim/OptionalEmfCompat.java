@@ -234,13 +234,47 @@ public final class OptionalEmfCompat {
 
     private static void beginEmfRender(LivingEntity entity, EntityModel<?> model) {
         ACTIVE_EMF_RENDER.remove();
+        pushEmfRenderContext(entity, model, null);
+    }
+
+    /**
+     * Starts a nested EMF render context for a secondary model rendered by an entity layer.
+     * Drowned render their outer skin with a second DrownedModel, so it must receive its own
+     * post-EMF Better Combat overlay instead of reusing the already-applied base-model context.
+     */
+    public static void beginEmfLayerRender(LivingEntity entity, EntityModel<?> model) {
+        EmfRenderContext current = ACTIVE_EMF_RENDER.get();
+        if (current == null || current.entity != entity) {
+            return;
+        }
+        pushEmfRenderContext(entity, model, current);
+    }
+
+    /** Restores the parent model context after a secondary EMF render layer finishes. */
+    public static void endEmfLayerRender(LivingEntity entity, EntityModel<?> model) {
+        EmfRenderContext current = ACTIVE_EMF_RENDER.get();
+        if (current == null || current.entity != entity || current.model != model) {
+            return;
+        }
+        if (current.previous == null) {
+            ACTIVE_EMF_RENDER.remove();
+        } else {
+            ACTIVE_EMF_RENDER.set(current.previous);
+        }
+    }
+
+    private static void pushEmfRenderContext(
+            LivingEntity entity,
+            EntityModel<?> model,
+            EmfRenderContext previous
+    ) {
         if (emfModelInterface == null || !emfModelInterface.isInstance(model)) {
             return;
         }
         try {
             Object rootObject = getEmfRootModel.invoke(model);
-            if (rootObject instanceof ModelPart root) {
-                ACTIVE_EMF_RENDER.set(new EmfRenderContext(entity, model));
+            if (rootObject instanceof ModelPart) {
+                ACTIVE_EMF_RENDER.set(new EmfRenderContext(entity, model, previous));
             }
         } catch (ReflectiveOperationException | RuntimeException exception) {
             warnOnce("Failed to prepare the EMF render-time arm overlay", exception);
@@ -1967,11 +2001,17 @@ public final class OptionalEmfCompat {
     private static final class EmfRenderContext {
         private final LivingEntity entity;
         private final EntityModel<?> model;
+        private final EmfRenderContext previous;
         private boolean applied;
 
-        private EmfRenderContext(LivingEntity entity, EntityModel<?> model) {
+        private EmfRenderContext(
+                LivingEntity entity,
+                EntityModel<?> model,
+                EmfRenderContext previous
+        ) {
             this.entity = entity;
             this.model = model;
+            this.previous = previous;
         }
     }
 
