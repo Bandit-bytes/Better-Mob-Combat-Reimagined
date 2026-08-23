@@ -29,6 +29,7 @@ import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -40,8 +41,8 @@ import java.util.WeakHashMap;
 public final class MobCombatLogic {
     private static final ResourceLocation DAMAGE_MODIFIER_ID = BetterMobCombatReimagined.id("attack_damage_multiplier");
     private static final double DEFAULT_FALLBACK_ATTACK_REACH = Math.sqrt(2.04F) - 0.6F;
-    private static final Set<String> ATTACK_DIAGNOSTICS = new LinkedHashSet<>();
-    private static final Map<Mob, PendingFallbackAttack> PENDING_FALLBACK_ATTACKS = new WeakHashMap<>();
+    private static final Set<String> ATTACK_DIAGNOSTICS = Collections.synchronizedSet(new LinkedHashSet<>());
+    private static final Map<Mob, PendingFallbackAttack> PENDING_FALLBACK_ATTACKS = Collections.synchronizedMap(new WeakHashMap<>());
 
     private MobCombatLogic() {
     }
