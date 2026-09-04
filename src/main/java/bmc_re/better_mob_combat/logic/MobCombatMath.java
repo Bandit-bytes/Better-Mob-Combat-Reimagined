@@ -61,6 +61,7 @@ public final class MobCombatMath {
     }
 
     public static float adjustedUpswing(AttackHand hand) {
+
         double rawUpswing = Mth.clamp(hand.attack().upswing(), 0.0D, 1.0D);
         double additional = rawUpswing * BMCConfig.ADDITIONAL_UPSWING_MULTIPLIER.get();
         double configured = hand.upswingRate() + additional;

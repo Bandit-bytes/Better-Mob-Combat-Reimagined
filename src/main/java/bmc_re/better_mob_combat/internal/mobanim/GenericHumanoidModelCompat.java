@@ -27,8 +27,13 @@ public final class GenericHumanoidModelCompat {
     private static final Map<EntityModel<?>, PartBinding> BINDINGS =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static final Set<String> LOGGED = Collections.synchronizedSet(new HashSet<>());
+    private static final Map<LivingEntity, Set<VisibilityState>> SAVED_VISIBILITY =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private static final Map<EmbeddedPlayerAnimator.AnimatedPart, String[]> ALIASES = aliases();
+    private static final String[] CROSSED_ARM_ALIASES = {
+            "arms", "crossed_arms", "crossedarms", "arms_rotation", "armsrotation"
+    };
 
     private GenericHumanoidModelCompat() {
     }
@@ -48,6 +53,10 @@ public final class GenericHumanoidModelCompat {
     }
 
     public static void apply(LivingEntity entity, EntityModel<?> model, float partialTick) {
+        // A renderer normally reaches our TAIL hook, but clear a stale visibility snapshot first
+        // in case another mod cancelled the previous render after the base model was prepared.
+        restore(entity);
+
         if (!(entity instanceof MobAnimationAccess access)
                 || model instanceof HumanoidModel<?>
                 || model instanceof IllagerModel<?>
@@ -79,6 +88,8 @@ public final class GenericHumanoidModelCompat {
             return;
         }
 
+        prepareIndependentWeaponArms(entity, access, binding, animated);
+
         apply(animation, "head", binding.get(EmbeddedPlayerAnimator.AnimatedPart.HEAD),
                 animated.contains(EmbeddedPlayerAnimator.AnimatedPart.HEAD));
         apply(animation, "torso", binding.get(EmbeddedPlayerAnimator.AnimatedPart.TORSO),
@@ -95,10 +106,78 @@ public final class GenericHumanoidModelCompat {
         String key = "resolved|" + entity.getType() + "|" + model.getClass().getName();
         if (LOGGED.add(key)) {
             BetterMobCombatReimagined.LOGGER.info(
-                    "[BMC custom-model] mob={} model={} resolvedParts={} activeChannels={}",
-                    entity.getType(), model.getClass().getName(), binding.names(), animated
+                    "[BMC custom-model] mob={} model={} resolvedParts={} crossedArms={} activeChannels={}",
+                    entity.getType(), model.getClass().getName(), binding.names(),
+                    binding.crossedArmsName(), animated
             );
         }
+    }
+
+    public static void restore(LivingEntity entity) {
+        Set<VisibilityState> saved = SAVED_VISIBILITY.remove(entity);
+        if (saved == null) {
+            return;
+        }
+        for (VisibilityState state : saved) {
+            state.part().visible = state.visible();
+        }
+    }
+
+    private static void prepareIndependentWeaponArms(
+            LivingEntity entity,
+            MobAnimationAccess access,
+            PartBinding binding,
+            EnumSet<EmbeddedPlayerAnimator.AnimatedPart> animated
+    ) {
+        if (!access.bmc$isAttackAnimationActive()) {
+            return;
+        }
+
+        boolean leftOwned = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+        boolean rightOwned = animated.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+        if (!leftOwned && !rightOwned) {
+            return;
+        }
+
+        ModelPart leftArm = binding.get(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+        ModelPart rightArm = binding.get(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+        ModelPart crossedArms = binding.crossedArms();
+
+        Set<VisibilityState> saved = Collections.newSetFromMap(new IdentityHashMap<>());
+        if (leftOwned) {
+            setVisible(leftArm, true, saved);
+        }
+        if (rightOwned) {
+            setVisible(rightArm, true, saved);
+        }
+
+        // Do not hide an "arms" node when it is merely the parent container for the independent
+        // arms. Villager-style combat models usually expose it as a separate crossed-arm sibling.
+        if (crossedArms != null
+                && crossedArms != leftArm
+                && crossedArms != rightArm
+                && !containsPart(crossedArms, leftArm)
+                && !containsPart(crossedArms, rightArm)) {
+            setVisible(crossedArms, false, saved);
+        }
+
+        if (!saved.isEmpty()) {
+            SAVED_VISIBILITY.put(entity, saved);
+        }
+    }
+
+    private static void setVisible(ModelPart part, boolean visible, Set<VisibilityState> saved) {
+        if (part == null || part.visible == visible) {
+            return;
+        }
+        saved.add(new VisibilityState(part, part.visible));
+        part.visible = visible;
+    }
+
+    private static boolean containsPart(ModelPart root, ModelPart target) {
+        return root != null
+                && target != null
+                && root.getAllParts().anyMatch(part -> part == target);
     }
 
     private static void apply(AnimationApplier animation, String channel, ModelPart part, boolean active) {
@@ -116,7 +195,9 @@ public final class GenericHumanoidModelCompat {
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         } else if (access.bmc$isAttackAnimationActive()) {
-
+            // Generic models (MCA/Townstead/custom villagers/NPCs) do not pass through the vanilla
+            // HumanoidModel arm ownership path. Respect the packet's logical hand here instead of
+            // assuming every attack uses the mob's dominant hand.
             boolean leftArm = access.bmc$isOffHandAttackAnimationActive();
             if (entity instanceof Mob mob && mob.isLeftHanded()) {
                 leftArm = !leftArm;
@@ -155,14 +236,28 @@ public final class GenericHumanoidModelCompat {
             }
         }
 
+        ModelPart crossedArms = null;
+        String crossedArmsName = null;
         if (model instanceof HierarchicalModel<?> hierarchical) {
             ModelPart root = hierarchical.root();
             if (root != null) {
                 resolveFromTree(root, parts, names);
+                crossedArms = findCrossedArms(root);
+                if (crossedArms != null) {
+                    crossedArmsName = "part:crossed-arms";
+                }
             }
         }
 
-        return new PartBinding(parts, names);
+        if (crossedArms == null) {
+            CrossedArmBinding reflected = findCrossedArmsField(model);
+            if (reflected != null) {
+                crossedArms = reflected.part();
+                crossedArmsName = "field:" + reflected.name();
+            }
+        }
+
+        return new PartBinding(parts, names, crossedArms, crossedArmsName);
     }
 
     private static void resolveFromTree(
@@ -211,6 +306,47 @@ public final class GenericHumanoidModelCompat {
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
         }
+    }
+
+    private static ModelPart findCrossedArms(ModelPart root) {
+        for (String alias : CROSSED_ARM_ALIASES) {
+            ModelPart found = findExactDescendant(root, alias);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static CrossedArmBinding findCrossedArmsField(EntityModel<?> model) {
+        for (Class<?> type = model.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (!ModelPart.class.isAssignableFrom(field.getType())
+                        || !matchesAlias(field.getName(), CROSSED_ARM_ALIASES)) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(model);
+                    if (value instanceof ModelPart part) {
+                        return new CrossedArmBinding(field.getName(), part);
+                    }
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                    // Tree lookup is preferred; a blocked reflective field is simply skipped.
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean matchesAlias(String value, String[] aliases) {
+        String normalized = normalize(value);
+        for (String alias : aliases) {
+            if (normalized.equals(normalize(alias))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static ModelPart findExactDescendant(ModelPart root, String name) {
@@ -299,12 +435,20 @@ public final class GenericHumanoidModelCompat {
         }
     }
 
+    private record VisibilityState(ModelPart part, boolean visible) {
+    }
+
+    private record CrossedArmBinding(String name, ModelPart part) {
+    }
+
     private record NamedPart(String name, ModelPart part) {
     }
 
     private record PartBinding(
             EnumMap<EmbeddedPlayerAnimator.AnimatedPart, ModelPart> parts,
-            EnumMap<EmbeddedPlayerAnimator.AnimatedPart, String> names
+            EnumMap<EmbeddedPlayerAnimator.AnimatedPart, String> names,
+            ModelPart crossedArms,
+            String crossedArmsName
     ) {
         ModelPart get(EmbeddedPlayerAnimator.AnimatedPart part) {
             return parts.get(part);

@@ -46,6 +46,15 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * Owns the embedded Mob Player Animator stack and adds Better Combat's pose and attack layers.
+ * Implementing Player Animator's IAnimatedPlayer contract is the critical part that lets its
+ * existing HumanoidModel armor/bend pipeline treat mobs exactly like animated players.
+ *
+ * <p>The lower-priority pose layers mirror Better Combat's player idle-pose system. This is what
+ * gives two-handed swords, bows, crossbows and other attributed weapons their intended stance
+ * between attacks. The attack layer remains at priority 2000 so swings always override the pose.</p>
+ */
 @Mixin(Mob.class)
 public abstract class ClientMobAnimationMixin extends LivingEntity implements MobAnimationAccess, IAnimatedPlayer {
     @Unique
@@ -57,6 +66,7 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private static final Set<String> BMC$ATTACK_DIAGNOSTICS = new HashSet<>();
 
+    /** Embedded Mob Player Animator storage. */
     @Unique
     private final Map<ResourceLocation, IAnimation> bmc$associatedAnimations = new HashMap<>();
 
@@ -85,18 +95,27 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
     @Unique
     private float bmc$renderPartialTick;
 
+    /** Exact client render lifetime for the current attack, independent of Player Animator fade state. */
     @Unique
     private int bmc$attackVisualTicks;
 
+    /** True only while the synchronized attack uses Better Combat's two-handed animation path. */
     @Unique
     private boolean bmc$twoHandedAttack;
 
+    /** Exact logical hand for the active attack; required by generic/custom humanoid models. */
     @Unique
     private boolean bmc$offHandAttack;
 
+    /**
+     * Deterministic ownership flag for Better Combat's idle body-pose arm channels. Do not infer
+     * this by reflectively walking Player Animator's modifier tree: fades and wrapper layers can
+     * temporarily hide the underlying keyframe player even though the authored grip is active.
+     */
     @Unique
     private boolean bmc$weaponBodyPoseActive;
 
+    /** True while the active idle body pose comes from a two-handed main-hand preset. */
     @Unique
     private boolean bmc$twoHandedWeaponPoseActive;
 
@@ -178,12 +197,19 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Override
     public boolean bmc$isAttackAnimationActive() {
+        // Use the synchronized packet lifetime as the authoritative render gate. Player Animator's
+        // isActive() can briefly report false while a replacement/fade modifier changes state,
+        // which caused EMF Vindicators to randomly lose an individual swing frame.
         return this.bmc$attackVisualTicks > 0
                 && this.bmc$attackAnimation.base.getAnimation() != null;
     }
 
     @Override
     public boolean bmc$isArmAnimationActive() {
+        // Every Better Combat attack animation owns its arm channels. Between attacks, only body
+        // pose layers own arms; item-pose layers affect held-item transforms without replacing the
+        // vanilla limb pose. This explicit state keeps two-handed grips stable across subclass
+        // model passes and across Player Animator fade/modifier transitions.
         return this.bmc$isAttackAnimationActive() || this.bmc$weaponBodyPoseActive;
     }
 
@@ -200,6 +226,10 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Override
     public boolean bmc$shouldForceAttackItemVisible() {
+        // Keep conditional illager held-item rendering synchronized with arm ownership. Releasing
+        // the axe a few ticks before the Player Animator layer yielded made Fresh Animations close
+        // the hands around empty space, then snap the crossed-arm node back independently. The item
+        // now disappears on the same frame Better Mob Combat actually gives the arms back.
         return this.bmc$isArmAnimationActive();
     }
 

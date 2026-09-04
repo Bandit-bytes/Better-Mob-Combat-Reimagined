@@ -194,6 +194,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
+        GenericHumanoidModelCompat.restore(entity);
         OptionalEmfCompat.resume(entity);
     }
 

@@ -32,6 +32,9 @@ public final class ExternalAttackCompat {
 
     public static boolean hasCustomMeleeOverride(Mob mob) {
         return CUSTOM_MELEE_OVERRIDE_CACHE.computeIfAbsent(mob.getClass(), type -> {
+            // getMethod() only sees public methods and can miss modded attack hooks declared deeper
+            // in an NPC hierarchy. Walk declarations explicitly so MCA/MineColonies-style mobs are
+            // correctly recognized even when they bypass Mob#doHurtTarget.
             for (Class<?> cursor = type; cursor != null && Mob.class.isAssignableFrom(cursor); cursor = cursor.getSuperclass()) {
                 try {
                     Method method = cursor.getDeclaredMethod("doHurtTarget", Entity.class);
@@ -83,9 +86,18 @@ public final class ExternalAttackCompat {
         }
     }
 
-
+    /**
+     * Last-resort compatibility bridge for NPC mods that neither call Mob#doHurtTarget nor emit a
+     * vanilla swing at attack start. The damage event is necessarily late for windup timing, but it
+     * guarantees a visible attack instead of a completely missing swing. Existing swing-triggered
+     * animations are deduplicated.
+     */
     public static void handleMeleeDamageAttempt(Mob mob) {
         MobCombatState state = (MobCombatState) mob;
+        // Native BMC attacks reach the damage event while their pending attack is still active and
+        // while invokeVanillaAttack has the re-entry guard set. Skip those so this bridge cannot
+        // create a second animation. Anything that reaches here without those markers bypassed the
+        // normal BMC attack path (common in NPC/citizen mods), so provide a visual fallback.
         if (state.bmc$getPendingAttack() != null || state.bmc$isCallingVanillaAttack() || isRecent(mob)) {
             return;
         }

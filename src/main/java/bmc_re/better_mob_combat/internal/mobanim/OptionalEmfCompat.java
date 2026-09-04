@@ -646,6 +646,26 @@ public final class OptionalEmfCompat {
 
             ModelPart emfLeftArm = findAliasedPart(root, LEFT_ARM_NAMES);
             ModelPart emfRightArm = findAliasedPart(root, RIGHT_ARM_NAMES);
+            boolean leftOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+            boolean rightOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+
+            // Some custom villager renderers swap to a separate combat model whenever an item is
+            // held. Villager Retaliation is one example: its combat model has independent
+            // RightArm/LeftArm parts plus a separate crossed-arms part. When EMF owns that model,
+            // make the actual weapon arms visible and hide only a truly separate crossed-arms
+            // branch for the duration of BMC's attack render.
+            if (leftOwned || rightOwned) {
+                List<PartState> saved = SAVED_PARTS.computeIfAbsent(
+                        entity.getUUID(), ignored -> new ArrayList<>()
+                );
+                if (leftOwned) {
+                    setVisible(emfLeftArm, true, saved);
+                }
+                if (rightOwned) {
+                    setVisible(emfRightArm, true, saved);
+                }
+                hideSeparatedCrossedArms(root, emfLeftArm, emfRightArm, saved);
+            }
 
             if (entity instanceof Vindicator) {
                 boolean waterborne = isWaterborne(entity);
@@ -664,8 +684,6 @@ public final class OptionalEmfCompat {
                 );
                 setIllagerCrossedArmsVisible(model, root, false, saved);
 
-                boolean leftOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-                boolean rightOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
                 if (waterborne) {
                     boolean leftApplied = false;
                     boolean rightApplied = false;
@@ -721,10 +739,10 @@ public final class OptionalEmfCompat {
                 if (!authored.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO)) {
                     copyPoseDelta(facade.bmc$getBody(), emfBody);
                 }
-                if (!authored.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM)) {
+                if (!leftOwned) {
                     copyPoseDelta(facade.bmc$getLeftArm(), emfLeftArm);
                 }
-                if (!authored.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM)) {
+                if (!rightOwned) {
                     copyPoseDelta(facade.bmc$getRightArm(), emfRightArm);
                 }
                 if (!authored.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG)) {
@@ -739,10 +757,12 @@ public final class OptionalEmfCompat {
                     authored.contains(EmbeddedPlayerAnimator.AnimatedPart.HEAD));
             updateEmfPart(animation, "torso", emfBody,
                     authored.contains(EmbeddedPlayerAnimator.AnimatedPart.TORSO));
-            updateEmfPart(animation, "leftArm", emfLeftArm,
-                    authored.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM));
-            updateEmfPart(animation, "rightArm", emfRightArm,
-                    authored.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM));
+            // `owned` includes the synchronized logical weapon arm even when Player Animator's
+            // introspection does not report that arm as an authored channel. Using `authored` here
+            // was the .11 regression that produced animated torsos with frozen weapon arms on
+            // Villager Retaliation's held-item combat model.
+            updateEmfPart(animation, "leftArm", emfLeftArm, leftOwned);
+            updateEmfPart(animation, "rightArm", emfRightArm, rightOwned);
             updateEmfPart(animation, "leftLeg", emfLeftLeg,
                     authored.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_LEG));
             updateEmfPart(animation, "rightLeg", emfRightLeg,
@@ -778,19 +798,28 @@ public final class OptionalEmfCompat {
             return;
         }
 
-        if (entity instanceof MobAnimationAccess access
-                && access.bmc$isTwoHandedArmAnimationActive()) {
+        if (!(entity instanceof MobAnimationAccess access)) {
+            return;
+        }
+
+        if (access.bmc$isTwoHandedArmAnimationActive()) {
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
             return;
         }
 
-        if (EmbeddedPlayerAnimator.isAttackAnimating(entity)) {
+        if (access.bmc$isAttackAnimationActive()) {
+            // Use the synchronized attack packet's logical hand instead of assuming every
+            // one-handed attack belongs to the mob's dominant arm. Custom villager/NPC renderers
+            // (Villager Retaliation, MCA-style models, etc.) commonly expose independent arms and
+            // need the same hand ownership rule as GenericHumanoidModelCompat.
+            boolean leftArm = access.bmc$isOffHandAttackAnimationActive();
             if (entity instanceof Mob mob && mob.isLeftHanded()) {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-            } else {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+                leftArm = !leftArm;
             }
+            animated.add(leftArm
+                    ? EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM
+                    : EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         }
     }
 
@@ -1198,6 +1227,29 @@ public final class OptionalEmfCompat {
         }
         part.getAllParts().forEach(partsToPause::add);
         return true;
+    }
+
+    private static void hideSeparatedCrossedArms(
+            ModelPart root,
+            ModelPart leftArm,
+            ModelPart rightArm,
+            List<PartState> saved
+    ) {
+        ModelPart crossedArms = findAliasedPart(root, CROSSED_ARM_NAMES);
+        if (crossedArms == null
+                || crossedArms == leftArm
+                || crossedArms == rightArm
+                || containsPart(crossedArms, leftArm)
+                || containsPart(crossedArms, rightArm)) {
+            return;
+        }
+        setVisible(crossedArms, false, saved);
+    }
+
+    private static boolean containsPart(ModelPart root, ModelPart target) {
+        return root != null
+                && target != null
+                && root.getAllParts().anyMatch(part -> part == target);
     }
 
     private static void setVisible(ModelPart part, boolean visible, List<PartState> saved) {
