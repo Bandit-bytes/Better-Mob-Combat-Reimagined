@@ -82,10 +82,11 @@ public final class BMCConfig {
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> ENTITY_BLACKLIST = SERVER_BUILDER
             .comment("Entity types that keep vanilla combat and vanilla animations entirely.",
-                    "Accepts entity type ids and entity type tags (tags are prefixed with '#').",
+                    "Accepts entity type ids, entity type tags (tags are prefixed with '#'), and namespace wildcards.",
                     "A bare id is assumed to be in the 'minecraft' namespace, so \"warden\" and",
-                    "\"minecraft:warden\" both work. Entries are case-sensitive and must be lowercase.",
-                    "Examples: [\"minecraft:warden\", \"warden\", \"#minecraft:raiders\"]")
+                    "\"minecraft:warden\" both work. Use \"minecolonies:*\" to exclude every entity from a mod.",
+                    "Entries are case-sensitive and must be lowercase.",
+                    "Examples: [\"minecraft:warden\", \"#minecraft:raiders\", \"minecolonies:*\"]")
             .defineListAllowEmpty("entityBlacklist", List.of(), BMCConfig::validEntityEntry);
 
     public static final ModConfigSpec.BooleanValue DEBUG_LOGGING = SERVER_BUILDER
@@ -119,6 +120,7 @@ public final class BMCConfig {
     public static final ModConfigSpec CLIENT_SPEC = CLIENT_BUILDER.build();
     private static volatile Set<ResourceLocation> blacklistIds = Set.of();
     private static volatile Set<TagKey<EntityType<?>>> blacklistTags = Set.of();
+    private static volatile Set<String> blacklistNamespaces = Set.of();
 
     private BMCConfig() {
     }
@@ -126,6 +128,7 @@ public final class BMCConfig {
     public static void rebuildCaches() {
         Set<ResourceLocation> ids = new HashSet<>();
         Set<TagKey<EntityType<?>>> tags = new HashSet<>();
+        Set<String> namespaces = new HashSet<>();
 
         for (String raw : ENTITY_BLACKLIST.get()) {
             if (raw == null) {
@@ -136,7 +139,15 @@ public final class BMCConfig {
                 continue;
             }
             boolean isTag = entry.startsWith("#");
-            ResourceLocation id = ResourceLocation.tryParse(isTag ? entry.substring(1) : entry);
+            String value = isTag ? entry.substring(1) : entry;
+            if (!isTag && value.endsWith(":*") && value.length() > 2) {
+                String namespace = value.substring(0, value.length() - 2);
+                if (ResourceLocation.tryParse(namespace + ":placeholder") != null) {
+                    namespaces.add(namespace);
+                }
+                continue;
+            }
+            ResourceLocation id = ResourceLocation.tryParse(value);
             if (id == null) {
                 continue;
             }
@@ -149,18 +160,23 @@ public final class BMCConfig {
 
         blacklistIds = Set.copyOf(ids);
         blacklistTags = Set.copyOf(tags);
+        blacklistNamespaces = Set.copyOf(namespaces);
     }
 
     public static boolean isBlacklisted(EntityType<?> type) {
         Set<ResourceLocation> ids = blacklistIds;
         Set<TagKey<EntityType<?>>> tags = blacklistTags;
-        if (ids.isEmpty() && tags.isEmpty()) {
+        Set<String> namespaces = blacklistNamespaces;
+        if (ids.isEmpty() && tags.isEmpty() && namespaces.isEmpty()) {
             return false;
         }
 
-        if (!ids.isEmpty()) {
-            ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
-            if (id != null && ids.contains(id)) {
+        ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
+        if (id != null) {
+            if (ids.contains(id)) {
+                return true;
+            }
+            if (namespaces.contains(id.getNamespace())) {
                 return true;
             }
         }
@@ -180,6 +196,10 @@ public final class BMCConfig {
         String entry = raw.trim();
         if (entry.isEmpty()) {
             return false;
+        }
+        if (!entry.startsWith("#") && entry.endsWith(":*") && entry.length() > 2) {
+            String namespace = entry.substring(0, entry.length() - 2);
+            return ResourceLocation.tryParse(namespace + ":placeholder") != null;
         }
         String id = entry.startsWith("#") ? entry.substring(1) : entry;
         return ResourceLocation.tryParse(id) != null;

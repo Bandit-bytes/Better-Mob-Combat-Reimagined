@@ -16,6 +16,8 @@ public interface MobAnimationAccess {
 
     boolean bmc$isTwoHandedArmAnimationActive();
 
+    boolean bmc$isOffHandAttackAnimationActive();
+
     boolean bmc$shouldForceAttackItemVisible();
 
     void bmc$playAttackAnimation(

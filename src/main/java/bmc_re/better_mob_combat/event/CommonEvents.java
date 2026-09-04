@@ -2,6 +2,7 @@ package bmc_re.better_mob_combat.event;
 
 import bmc_re.better_mob_combat.api.RangedWeaponKind;
 import bmc_re.better_mob_combat.config.BMCConfig;
+import bmc_re.better_mob_combat.logic.ExternalAttackCompat;
 import bmc_re.better_mob_combat.network.BMCNetwork;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -14,6 +15,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.item.TridentItem;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 
 public final class CommonEvents {
     private CommonEvents() {
@@ -49,6 +51,24 @@ public final class CommonEvents {
                 weapon.kind(),
                 weapon.hand() == InteractionHand.OFF_HAND
         );
+    }
+
+
+    public static void onLivingDamagePre(LivingDamageEvent.Pre event) {
+        if (event.getEntity().level().isClientSide || !BMCConfig.ENABLED.get()) {
+            return;
+        }
+
+        Entity attacker = event.getSource().getEntity();
+        Entity direct = event.getSource().getDirectEntity();
+        if (!(attacker instanceof Mob mob) || direct != attacker || !mob.isAlive()) {
+            return;
+        }
+        if (BMCConfig.isBlacklisted(mob.getType())) {
+            return;
+        }
+
+        ExternalAttackCompat.handleMeleeDamageAttempt(mob);
     }
 
     private static WeaponContext classify(ItemStack stack, InteractionHand hand) {

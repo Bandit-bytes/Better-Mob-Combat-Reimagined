@@ -116,11 +116,14 @@ public final class GenericHumanoidModelCompat {
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
             animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         } else if (access.bmc$isAttackAnimationActive()) {
+
+            boolean leftArm = access.bmc$isOffHandAttackAnimationActive();
             if (entity instanceof Mob mob && mob.isLeftHanded()) {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
-            } else {
-                animated.add(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+                leftArm = !leftArm;
             }
+            animated.add(leftArm
+                    ? EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM
+                    : EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
         }
     }
 

@@ -27,6 +27,7 @@ public final class BetterMobCombatReimagined {
         modBus.addListener(BetterMobCombatReimagined::onConfigReloading);
 
         NeoForge.EVENT_BUS.addListener(CommonEvents::onEntityJoinLevel);
+        NeoForge.EVENT_BUS.addListener(CommonEvents::onLivingDamagePre);
         LOGGER.info("Loading Better Mob Combat: Reimagined for NeoForge 1.21.1");
     }
 

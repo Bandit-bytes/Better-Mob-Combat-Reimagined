@@ -14,7 +14,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
 
 import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -23,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 
 public final class ExternalAttackCompat {
-    private static final Map<UUID, Long> LAST_VISUAL_TICK = new HashMap<>();
+    private static final Map<UUID, Long> LAST_VISUAL_TICK = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Boolean> CUSTOM_MELEE_OVERRIDE_CACHE = new ConcurrentHashMap<>();
     private static final Set<String> LOGGED_BRIDGES = ConcurrentHashMap.newKeySet();
     private static final int DEDUPE_TICKS = 10;
@@ -33,13 +32,18 @@ public final class ExternalAttackCompat {
 
     public static boolean hasCustomMeleeOverride(Mob mob) {
         return CUSTOM_MELEE_OVERRIDE_CACHE.computeIfAbsent(mob.getClass(), type -> {
-            try {
-                Method method = type.getMethod("doHurtTarget", Entity.class);
-                Class<?> owner = method.getDeclaringClass();
-                return owner != Mob.class && !owner.getName().startsWith("net.minecraft.");
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                return false;
+            for (Class<?> cursor = type; cursor != null && Mob.class.isAssignableFrom(cursor); cursor = cursor.getSuperclass()) {
+                try {
+                    Method method = cursor.getDeclaredMethod("doHurtTarget", Entity.class);
+                    Class<?> owner = method.getDeclaringClass();
+                    return owner != Mob.class && !owner.getName().startsWith("net.minecraft.");
+                } catch (NoSuchMethodException ignored) {
+                    // Keep walking toward Mob.
+                } catch (RuntimeException ignored) {
+                    return false;
+                }
             }
+            return false;
         });
     }
 
@@ -57,7 +61,9 @@ public final class ExternalAttackCompat {
         }
 
         try {
-            return hasCustomMeleeOverride(mob) && MobAttackSelector.hasCombatWeapon(mob);
+            return hasCustomMeleeOverride(mob)
+                    && (MobAttackSelector.hasCombatWeapon(mob)
+                    || BMCConfig.ENABLE_FALLBACK_MELEE_ANIMATIONS.get());
         } catch (RuntimeException ignored) {
             return false;
         }
@@ -75,6 +81,15 @@ public final class ExternalAttackCompat {
         if (needsVisualBridge(mob) && !isRecent(mob)) {
             play(mob, InteractionHand.MAIN_HAND, "damage");
         }
+    }
+
+
+    public static void handleMeleeDamageAttempt(Mob mob) {
+        MobCombatState state = (MobCombatState) mob;
+        if (state.bmc$getPendingAttack() != null || state.bmc$isCallingVanillaAttack() || isRecent(mob)) {
+            return;
+        }
+        play(mob, InteractionHand.MAIN_HAND, "damage-event");
     }
 
     private static boolean play(Mob mob, InteractionHand requestedHand, String trigger) {
