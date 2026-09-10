@@ -113,6 +113,85 @@ public final class GenericHumanoidModelCompat {
         }
     }
 
+    /**
+     * Applies only Better Combat's live weapon-arm channels directly to a custom model.
+     *
+     * <p>This intentionally bypasses the normal EMF exclusion. It is for compatibility hooks that
+     * run from the custom model's own {@code setupAnim} after that model has finished resetting and
+     * posing its visible arm parts. Villager Retaliation's combat/humanoid villager models are the
+     * first user of this path.</p>
+     *
+     * @return true when at least one weapon arm was updated
+     */
+    public static boolean applyAttackArmsDirect(
+            LivingEntity entity,
+            EntityModel<?> model,
+            float partialTick
+    ) {
+        if (!(entity instanceof MobAnimationAccess access)
+                || !access.bmc$isAttackAnimationActive()
+                || !supportsModel(model)) {
+            return false;
+        }
+
+        AnimationApplier animation = EmbeddedPlayerAnimator.getAnimation(entity);
+        if (animation == null || !animation.isActive()) {
+            return false;
+        }
+
+        animation.setTickDelta(partialTick);
+        if (!animation.isActive()) {
+            return false;
+        }
+
+        EnumSet<EmbeddedPlayerAnimator.AnimatedPart> owned =
+                EmbeddedPlayerAnimator.getCurrentlyAnimatedParts(entity);
+        ensureWeaponArms(entity, access, owned);
+
+        PartBinding binding = BINDINGS.computeIfAbsent(model, GenericHumanoidModelCompat::resolve);
+        ModelPart leftArm = binding.get(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+        ModelPart rightArm = binding.get(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+
+        boolean leftOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.LEFT_ARM);
+        boolean rightOwned = owned.contains(EmbeddedPlayerAnimator.AnimatedPart.RIGHT_ARM);
+        boolean applied = false;
+
+        if (leftOwned && leftArm != null) {
+            animation.updatePart("leftArm", leftArm);
+            leftArm.visible = true;
+            applied = true;
+        }
+        if (rightOwned && rightArm != null) {
+            animation.updatePart("rightArm", rightArm);
+            rightArm.visible = true;
+            applied = true;
+        }
+
+        if (applied && binding.crossedArms() != null
+                && binding.crossedArms() != leftArm
+                && binding.crossedArms() != rightArm
+                && !containsPart(binding.crossedArms(), leftArm)
+                && !containsPart(binding.crossedArms(), rightArm)) {
+            binding.crossedArms().visible = false;
+        }
+
+        if (applied) {
+            String key = "direct-arms|" + entity.getType() + "|" + model.getClass().getName();
+            if (LOGGED.add(key)) {
+                BetterMobCombatReimagined.LOGGER.info(
+                        "[BMC custom-model direct arms] mob={} model={} leftOwned={} rightOwned={} parts={}",
+                        entity.getType(), model.getClass().getName(), leftOwned, rightOwned, binding.names()
+                );
+            }
+        }
+
+        return applied;
+    }
+
+    /**
+     * Restores temporary visibility changes made for custom models with separate crossed-arm and
+     * independent arm branches (for example Villager Retaliation's held-item combat model).
+     */
     public static void restore(LivingEntity entity) {
         Set<VisibilityState> saved = SAVED_VISIBILITY.remove(entity);
         if (saved == null) {

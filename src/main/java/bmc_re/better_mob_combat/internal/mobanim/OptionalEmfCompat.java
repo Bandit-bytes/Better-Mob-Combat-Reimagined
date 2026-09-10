@@ -281,6 +281,38 @@ public final class OptionalEmfCompat {
         }
     }
 
+    /**
+     * Re-checks the renderer's actual model immediately before the base model is rendered.
+     *
+     * Some renderer mods (notably Villager Retaliation) swap from the vanilla villager model to
+     * a separate held-item/combat model after LivingEntityRenderer#render has already started.
+     * The HEAD hook therefore sees an unsupported vanilla VillagerModel and cannot establish an
+     * EMF render context. Without refreshing here, EMF animates the replacement model but BMC's
+     * post-EMF arm overlay has no model/root to target, producing a moving body with frozen arms.
+     */
+    public static void refreshCurrentRenderModel(LivingEntity entity, EntityModel<?> model) {
+        if (!(entity instanceof MobAnimationAccess)
+                || !initialize()
+                || !GenericHumanoidModelCompat.supportsModel(model)
+                || emfModelInterface == null
+                || !emfModelInterface.isInstance(model)) {
+            return;
+        }
+
+        HUMANOID_RENDER_PASS.add(entity);
+
+        EmfRenderContext current = ACTIVE_EMF_RENDER.get();
+        if (current != null && current.entity == entity && current.model == model) {
+            return;
+        }
+
+        // This is a base-renderer model replacement, not a nested render layer. Any context that
+        // was prepared at HEAD belongs to the stale model and must not be restored afterward.
+        ACTIVE_EMF_RENDER.remove();
+        pushEmfRenderContext(entity, model, null);
+
+    }
+
     /** Called by the optional EMF model-part mixin directly after EMF runs its live animation. */
     public static void reapplyArmsAfterEmfAnimation() {
         EmfRenderContext context = ACTIVE_EMF_RENDER.get();
@@ -293,6 +325,30 @@ public final class OptionalEmfCompat {
         // that section itself to be the root meant the late overlay never ran for baby zombies.
         context.applied = true;
         reapplyArms(context.entity, context.model);
+    }
+
+    /**
+     * Final safety net immediately before the renderer draws the base model.
+     *
+     * <p>Normally {@link #reapplyArmsAfterEmfAnimation()} runs directly after EMF evaluates its
+     * live animation. A renderer that swaps to a different model later in the same render (for
+     * example Villager Retaliation's held-item combat model) creates its EMF context only after
+     * that animation callback has already passed. In that case the refreshed context is valid but
+     * still unapplied. Reapply it here exactly once, after every model swap/setup pass and before
+     * {@code renderToBuffer}, so Fresh Animations cannot leave the visible weapon arms in its idle
+     * pose.</p>
+     */
+    public static void reapplyArmsBeforeBaseModel(LivingEntity entity, EntityModel<?> model) {
+        EmfRenderContext context = ACTIVE_EMF_RENDER.get();
+        if (context == null
+                || context.applied
+                || context.entity != entity
+                || context.model != model) {
+            return;
+        }
+
+        context.applied = true;
+        reapplyArms(entity, model);
     }
 
     public static void reapplyArms(LivingEntity entity, EntityModel<?> model) {

@@ -146,6 +146,13 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             int packedLight,
             CallbackInfo ci
     ) {
+        // Renderer mods can replace the model after our HEAD hook (Villager Retaliation swaps to
+        // a held-item combat model this way). Refresh the EMF context against the model that is
+        // actually about to render before choosing the generic/non-EMF path.
+        OptionalEmfCompat.refreshCurrentRenderModel(entity, this.model);
+        // A late model swap happens after EMF's normal post-animation callback. If the refreshed
+        // model has not received BMC's arm overlay yet, apply it now before the actual draw.
+        OptionalEmfCompat.reapplyArmsBeforeBaseModel(entity, this.model);
         GenericHumanoidModelCompat.apply(entity, this.model, partialTick);
         bmc$logLegsOnce(entity);
     }

@@ -61,7 +61,11 @@ public final class MobCombatMath {
     }
 
     public static float adjustedUpswing(AttackHand hand) {
-
+        // AttackHand#upswingRate already applies Better Combat's global upswing multiplier.
+        // Do not force the result back up to the raw weapon JSON value: doing so makes mobs hit
+        // substantially later than players when an attack defines a large custom upswing (for
+        // example 1.0 with Better Combat's 0.5 global multiplier). The BMC setting is an additive
+        // bonus to that multiplier, matching the original config description.
         double rawUpswing = Mth.clamp(hand.attack().upswing(), 0.0D, 1.0D);
         double additional = rawUpswing * BMCConfig.ADDITIONAL_UPSWING_MULTIPLIER.get();
         double configured = hand.upswingRate() + additional;
