@@ -1184,11 +1184,6 @@ public final class OptionalEmfCompat {
         return branches;
     }
 
-    /**
-     * Returns only the outermost matching arm branch. EMF/CEM trees can contain another
-     * left_arm/right_arm below a wrapper with the same normalized name; applying the same
-     * animation to both would compound rotations.
-     */
     private static List<ModelPart> findAliasedBranchRoots(
             ModelPart root,
             boolean visibleOnly,
@@ -1566,10 +1561,6 @@ public final class OptionalEmfCompat {
         snapshot.visibilityStates().forEach((part, state) -> state.restore(part));
     }
 
-    /**
-     * Water variant: preserves the complete Fresh Animations swim pose while EMF is paused, but
-     * does not add the land-walking continuation used by the normal Vindicator path.
-     */
     private static NonArmSnapshot restoreWaterborneVindicatorNonArmState(
             LivingEntity entity,
             ModelPart root
@@ -1703,11 +1694,6 @@ public final class OptionalEmfCompat {
         return List.copyOf(matches);
     }
 
-    /**
-     * Resolves EMF's canonical wrapper for a vanilla model part. Fresh Animations custom CEM
-     * branches are parented below these wrappers, so rotating the wrapper reaches the actually
-     * rendered variant without guessing hidden/custom child names.
-     */
     private static ModelPart findEmfVanillaPart(ModelPart root, String... aliases) {
         if (root == null) {
             return null;
