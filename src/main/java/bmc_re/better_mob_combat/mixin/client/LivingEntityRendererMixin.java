@@ -31,6 +31,21 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
     @Unique
     private static final Set<String> BMC$RENDER_DIAGNOSTICS = new HashSet<>();
 
+    /**
+     * DEBUG_LOGGING lives in the SERVER config, which NeoForge only loads inside a world.
+     * Entities rendered outside one (title screen, FancyMenu / Fancy Entity Renderer player
+     * previews, other menus) would otherwise throw "Cannot get config value before config
+     * is loaded". Outside a world, debug logging simply counts as off.
+     */
+    @Unique
+    private static boolean bmc$debugLogging() {
+        try {
+            return BMCConfig.DEBUG_LOGGING.get();
+        } catch (IllegalStateException notLoadedYet) {
+            return false;
+        }
+    }
+
     @Shadow
     protected M model;
 
@@ -58,7 +73,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
         animatedMob.bmc$setRenderPartialTick(partialTick);
 
         if (animatedMob.bmc$isArmAnimationActive()
-                && BMCConfig.DEBUG_LOGGING.get()) {
+                && bmc$debugLogging()) {
             String diagnosticKey = entity.getType() + "|" + this.model.getClass().getName()
                     + "|" + animatedMob.bmc$isTwoHandedArmAnimationActive();
 
@@ -162,13 +177,14 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
 
     @Unique
     private void bmc$logLegsOnce(T entity) {
-        if (!BMCConfig.DEBUG_LOGGING.get()) {
-            return;
-        }
+        // Cheap checks first: most rendered entities bail out here.
         if (!(this.model instanceof HumanoidModelAccess access)) {
             return;
         }
         if (!EmbeddedPlayerAnimator.isAnimating(entity)) {
+            return;
+        }
+        if (!bmc$debugLogging()) {
             return;
         }
         String key = "legs|" + entity.getType();
