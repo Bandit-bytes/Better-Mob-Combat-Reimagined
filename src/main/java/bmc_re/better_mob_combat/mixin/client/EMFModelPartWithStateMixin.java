@@ -16,6 +16,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
         remap = false
 )
 public abstract class EMFModelPartWithStateMixin {
+    // Both hooks are optional (require = 0): EMF 3.2+ animates through EMFModelPartRoot#animate,
+    // while EMF 3.0.x/3.1.x animate through EMFModelPart.Animator#run. Exactly one of them matches
+    // a given EMF version, and a missing hook must never crash the game for an optional compat layer.
+
     @Inject(
             method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;III)V",
             at = @At(
@@ -24,9 +28,32 @@ public abstract class EMFModelPartWithStateMixin {
                     shift = At.Shift.AFTER,
                     remap = false
             ),
+            require = 0,
             remap = false
     )
     private void bmc$overlayAttackArmsAfterEmfAnimation(
+            PoseStack poseStack,
+            VertexConsumer vertexConsumer,
+            int packedLight,
+            int packedOverlay,
+            int packedColor,
+            CallbackInfo ci
+    ) {
+        OptionalEmfCompat.reapplyArmsAfterEmfAnimation();
+    }
+
+    @Inject(
+            method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;III)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Ltraben/entity_model_features/models/parts/EMFModelPart$Animator;run()V",
+                    shift = At.Shift.AFTER,
+                    remap = false
+            ),
+            require = 0,
+            remap = false
+    )
+    private void bmc$overlayAttackArmsAfterLegacyEmfAnimation(
             PoseStack poseStack,
             VertexConsumer vertexConsumer,
             int packedLight,

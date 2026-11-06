@@ -34,6 +34,7 @@ import java.util.WeakHashMap;
 @OnlyIn(Dist.CLIENT)
 public final class RangedMobAnimator {
     private static final int RELEASE_DURATION_TICKS = 7;
+    private static final int SPEAR_RELEASE_DURATION_TICKS = 11;
     private static final Map<LivingEntity, ReleaseState> RELEASE_STATES = new WeakHashMap<>();
 
     private RangedMobAnimator() {
@@ -89,14 +90,29 @@ public final class RangedMobAnimator {
             return;
         }
 
+        boolean spear = release.kind() == RangedWeaponKind.SPEAR;
+        float duration = spear ? SPEAR_RELEASE_DURATION_TICKS : RELEASE_DURATION_TICKS;
         float elapsed = age - release.startTick();
-        if (elapsed >= RELEASE_DURATION_TICKS || elapsed < 0.0F) {
+        if (elapsed >= duration || elapsed < 0.0F) {
             RELEASE_STATES.remove(entity);
             return;
         }
 
-        float progress = Mth.clamp(elapsed / RELEASE_DURATION_TICKS, 0.0F, 1.0F);
-        float recoil = Mth.sin(progress * (float) Math.PI) * (1.0F - progress);
+        float progress = Mth.clamp(elapsed / duration, 0.0F, 1.0F);
+        float recoil;
+        if (spear) {
+            // Whip forward to full extension in the first ~20%, then ease back into the wind-up.
+            float strike = 0.2F;
+            if (progress < strike) {
+                float t = progress / strike;
+                recoil = 1.0F - (1.0F - t) * (1.0F - t);
+            } else {
+                float t = (progress - strike) / (1.0F - strike);
+                recoil = 1.0F - t * t * (3.0F - 2.0F * t);
+            }
+        } else {
+            recoil = Mth.sin(progress * (float) Math.PI) * (1.0F - progress);
+        }
         applyRelease(model, release.rightArm(), release.kind(), recoil);
     }
 
@@ -242,21 +258,32 @@ public final class RangedMobAnimator {
         supportArm.yRot += side * 0.30F;
     }
 
+    /**
+     * Javelin wind-up. Vanilla's THROW_SPEAR pose pushes the arm 45 degrees behind vertical on top
+     * of the zombie-arm pose, which leaves the trident hanging behind the head. Replace it with a
+     * coiled overhead stance: throwing arm high and slightly back so the trident points at the
+     * target, the other arm reaching forward to aim, and the torso turned onto the throwing side.
+     */
     private static void applySpearAim(HumanoidModel<?> model, boolean rightHanded, float age) {
         float side = rightHanded ? 1.0F : -1.0F;
-        float tension = Mth.sin(age * 0.13F) * 0.018F;
+        float tension = Mth.sin(age * 0.13F) * 0.025F;
         ModelPart throwingArm = rightHanded ? model.rightArm : model.leftArm;
         ModelPart supportArm = rightHanded ? model.leftArm : model.rightArm;
 
-        model.body.yRot -= side * 0.20F;
-        model.body.xRot -= 0.07F;
-        throwingArm.xRot -= 0.12F + tension;
-        throwingArm.yRot -= side * 0.12F;
-        throwingArm.zRot += side * 0.06F;
-        supportArm.xRot -= 0.28F;
-        supportArm.yRot += side * 0.20F;
-        applyBracedLegs(model, side, 0.15F);
+        model.body.yRot = side * SPEAR_TORSO_TWIST;
+        model.body.xRot = -0.06F;
+        throwingArm.xRot = SPEAR_ARM_RAISE - tension;
+        throwingArm.yRot = side * SPEAR_TORSO_TWIST;
+        throwingArm.zRot = 0.0F;
+        supportArm.xRot = -1.35F + model.head.xRot * 0.5F;
+        supportArm.yRot = side * 0.35F;
+        supportArm.zRot = 0.0F;
+        applyBracedLegs(model, side, 0.18F);
     }
+
+    /** Arm angle while coiled: just past vertical, so the trident sits above the head. */
+    private static final float SPEAR_ARM_RAISE = -3.25F;
+    private static final float SPEAR_TORSO_TWIST = 0.30F;
 
     private static void applyBracedLegs(HumanoidModel<?> model, float side, float amount) {
         model.rightLeg.xRot += amount;
@@ -290,11 +317,16 @@ public final class RangedMobAnimator {
                 otherArm.xRot += recoil * 0.18F;
             }
             case SPEAR -> {
-                model.body.xRot -= recoil * 0.13F;
-                model.body.yRot += side * recoil * 0.22F;
-                weaponArm.xRot += recoil * 0.62F;
-                weaponArm.yRot += side * recoil * 0.24F;
-                otherArm.xRot += recoil * 0.12F;
+                // recoil is the throw curve here: a fast forward whip of the throwing arm through
+                // the target line, the torso uncoiling, and the aiming arm pulling back down.
+                // The arm stops well above shoulder height so the trident still in hand finishes
+                // angled down at the target instead of flipping over.
+                model.body.xRot += recoil * 0.28F;
+                model.body.yRot -= side * recoil * (SPEAR_TORSO_TWIST * 2.0F);
+                weaponArm.xRot += recoil * 0.95F;
+                weaponArm.yRot -= side * recoil * (SPEAR_TORSO_TWIST * 1.6F);
+                otherArm.xRot += recoil * 0.95F;
+                otherArm.yRot -= side * recoil * 0.25F;
             }
             case GENERIC -> {
                 model.body.xRot += recoil * 0.10F;

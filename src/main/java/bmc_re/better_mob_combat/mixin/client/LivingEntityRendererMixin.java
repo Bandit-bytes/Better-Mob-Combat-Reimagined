@@ -119,9 +119,14 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             CallbackInfo ci
     ) {
 
+        // Player Animator's "body" channel is a whole-model transform: head, torso, arms and legs
+        // twist and lean together. Vanilla illager models need it exactly like humanoid models,
+        // otherwise only the torso part rotates and the head visibly detaches mid-swing. EMF-driven
+        // illager models are excluded because EMF owns their root hierarchy; OptionalEmfCompat
+        // overlays the attack channels onto that tree instead.
         if (entity instanceof Mob
                 && !entity.isBaby()
-                && !(this.model instanceof IllagerModel<?>)
+                && !(this.model instanceof IllagerModel<?> && OptionalEmfCompat.isEmfModel(this.model))
                 && GenericHumanoidModelCompat.supportsModel(this.model)) {
             EmbeddedPlayerAnimator.applyBodyTransform(
                     EmbeddedPlayerAnimator.getAnimation(entity),
