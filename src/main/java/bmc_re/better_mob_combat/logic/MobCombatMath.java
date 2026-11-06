@@ -1,14 +1,11 @@
 package bmc_re.better_mob_combat.logic;
 
 import bmc_re.better_mob_combat.config.BMCConfig;
-import net.bettercombat.BetterCombatMod;
+import net.bettercombat.BetterCombat;
 import net.bettercombat.api.AttackHand;
-import net.bettercombat.api.WeaponAttributes;
-import net.minecraft.core.Holder;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
@@ -17,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class MobCombatMath {
+    private static final double DEFAULT_ATTACK_RANGE = 3.0D;
+
     private MobCombatMath() {
     }
 
@@ -29,7 +28,7 @@ public final class MobCombatMath {
         }
         double exactDuration = 20.0D / Math.max(0.1D, attackSpeed);
         double minimum = BMCConfig.MINIMUM_ATTACK_INTERVAL.get();
-        if (BetterCombatMod.getConfig() == null || !BetterCombatMod.getConfig().allow_fast_attacks) {
+        if (BetterCombat.config == null || !BetterCombat.config.allow_fast_attacks) {
             minimum = Math.max(minimum, 10.0D);
         }
 
@@ -78,57 +77,18 @@ public final class MobCombatMath {
     }
 
     public static double attackRange(Mob mob, AttackHand hand) {
-        WeaponAttributes attributes = hand.attributes();
-        double rangeMultiplier = Math.max(0.05F, hand.attack().rangeMultiplier());
-
-        double legacyAbsoluteRange = attributes.attackRange();
-        double range;
-        if (legacyAbsoluteRange > 0.0D) {
-            range = legacyAbsoluteRange * rangeMultiplier;
-        } else {
-            ItemStack stack = hand.itemStack();
-            range = itemHasModifier(stack, Attributes.ENTITY_INTERACTION_RANGE)
-                    ? applyItemModifiers(2.5D, stack, EquipmentSlot.MAINHAND, Attributes.ENTITY_INTERACTION_RANGE)
-                    : 2.5D + attributes.rangeBonus();
-            range *= rangeMultiplier;
+        // Better Combat 1.x (Minecraft 1.20.1) stores the absolute reach in the weapon attributes.
+        // There is no per-attack range multiplier or interaction-range attribute on this version.
+        double range = hand.attributes().attackRange();
+        if (range <= 0.0D) {
+            range = DEFAULT_ATTACK_RANGE;
         }
-
         return Math.max(0.5D, range + BMCConfig.ADDITIONAL_ATTACK_RANGE.get());
-    }
-
-    private static boolean itemHasModifier(ItemStack stack, Holder<Attribute> searchedAttribute) {
-        final boolean[] found = {false};
-        stack.forEachModifier(EquipmentSlot.MAINHAND, (attribute, modifier) -> {
-            if (attribute.equals(searchedAttribute)) {
-                found[0] = true;
-            }
-        });
-        return found[0];
-    }
-
-    private static double applyItemModifiers(
-            double base,
-            ItemStack stack,
-            EquipmentSlot slot,
-            Holder<Attribute> searchedAttribute
-    ) {
-        List<AttributeModifier> modifiers = new ArrayList<>();
-        stack.forEachModifier(slot, (attribute, modifier) -> {
-            if (attribute.equals(searchedAttribute)) {
-                modifiers.add(modifier);
-            }
-        });
-        return applyModifiers(base, modifiers);
     }
 
     private static double itemAttackSpeed(ItemStack stack, EquipmentSlot slot) {
         double base = 4.0D;
-        List<AttributeModifier> modifiers = new ArrayList<>();
-        stack.forEachModifier(slot, (Holder<Attribute> attribute, AttributeModifier modifier) -> {
-            if (attribute.is(Attributes.ATTACK_SPEED)) {
-                modifiers.add(modifier);
-            }
-        });
+        List<AttributeModifier> modifiers = new ArrayList<>(stack.getAttributeModifiers(slot).get(Attributes.ATTACK_SPEED));
         return Math.max(0.1D, applyModifiers(base, modifiers));
     }
 
@@ -137,10 +97,10 @@ public final class MobCombatMath {
         double addBase = 0.0D;
         double multiplyTotal = 1.0D;
         for (AttributeModifier modifier : modifiers) {
-            switch (modifier.operation()) {
-                case ADD_VALUE -> add += modifier.amount();
-                case ADD_MULTIPLIED_BASE -> addBase += modifier.amount();
-                case ADD_MULTIPLIED_TOTAL -> multiplyTotal *= 1.0D + modifier.amount();
+            switch (modifier.getOperation()) {
+                case ADDITION -> add += modifier.getAmount();
+                case MULTIPLY_BASE -> addBase += modifier.getAmount();
+                case MULTIPLY_TOTAL -> multiplyTotal *= 1.0D + modifier.getAmount();
             }
         }
         return (base + add + base * addBase) * multiplyTotal;

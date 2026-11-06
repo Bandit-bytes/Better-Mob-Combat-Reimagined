@@ -391,7 +391,10 @@ public final class EmbeddedPlayerAnimator {
             VertexConsumer vertices,
             int packedLight,
             int packedOverlay,
-            int color,
+            float red,
+            float green,
+            float blue,
+            float alpha,
             SetableSupplier<AnimationProcessor> supplier,
             Iterable<ModelPart> headParts,
             Iterable<ModelPart> bodyParts
@@ -403,12 +406,12 @@ public final class EmbeddedPlayerAnimator {
 
         for (ModelPart part : headParts) {
             if (!((IUpperPartHelper) (Object) part).isUpperPart()) {
-                part.render(poseStack, vertices, packedLight, packedOverlay, color);
+                part.render(poseStack, vertices, packedLight, packedOverlay, red, green, blue, alpha);
             }
         }
         for (ModelPart part : bodyParts) {
             if (!((IUpperPartHelper) (Object) part).isUpperPart()) {
-                part.render(poseStack, vertices, packedLight, packedOverlay, color);
+                part.render(poseStack, vertices, packedLight, packedOverlay, red, green, blue, alpha);
             }
         }
 
@@ -416,12 +419,12 @@ public final class EmbeddedPlayerAnimator {
         IBendHelper.rotateMatrixStack(poseStack, processor.getBend("body"));
         for (ModelPart part : headParts) {
             if (((IUpperPartHelper) (Object) part).isUpperPart()) {
-                part.render(poseStack, vertices, packedLight, packedOverlay, color);
+                part.render(poseStack, vertices, packedLight, packedOverlay, red, green, blue, alpha);
             }
         }
         for (ModelPart part : bodyParts) {
             if (((IUpperPartHelper) (Object) part).isUpperPart()) {
-                part.render(poseStack, vertices, packedLight, packedOverlay, color);
+                part.render(poseStack, vertices, packedLight, packedOverlay, red, green, blue, alpha);
             }
         }
         poseStack.popPose();

@@ -10,54 +10,51 @@ authors = "${mod_authors}"
 description = '''${mod_description}'''
 displayTest = "MATCH_VERSION"
 
-[[mixins]]
-config = "better_mob_combat_reimagined.mixins.json"
-
-[[dependencies."${mod_id}"]]
-modId = "neoforge"
-type = "required"
-versionRange = "${neo_version_range}"
+[[dependencies.${mod_id}]]
+modId = "forge"
+mandatory = true
+versionRange = "${forge_version_range}"
 ordering = "NONE"
 side = "BOTH"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "minecraft"
-type = "required"
+mandatory = true
 versionRange = "${minecraft_version_range}"
 ordering = "NONE"
 side = "BOTH"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "bettercombat"
-type = "required"
-versionRange = "[2.3.2,2.5)"
+mandatory = true
+versionRange = "[1.8.6,)"
 ordering = "AFTER"
 side = "BOTH"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "playeranimator"
-type = "required"
-versionRange = "[2.0.4,3)"
+mandatory = true
+versionRange = "[1.0.2-rc1+1.20,)"
 ordering = "AFTER"
 side = "BOTH"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "cloth_config"
-type = "required"
-versionRange = "[15.0.130,16)"
+mandatory = true
+versionRange = "[11,)"
 ordering = "AFTER"
 side = "BOTH"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "entity_texture_features"
-type = "optional"
-versionRange = "[7.1,)"
+mandatory = false
+versionRange = "[7.0,)"
 ordering = "AFTER"
 side = "CLIENT"
 
-[[dependencies."${mod_id}"]]
+[[dependencies.${mod_id}]]
 modId = "entity_model_features"
-type = "optional"
+mandatory = false
 versionRange = "[3.0.6,)"
 ordering = "AFTER"
 side = "CLIENT"

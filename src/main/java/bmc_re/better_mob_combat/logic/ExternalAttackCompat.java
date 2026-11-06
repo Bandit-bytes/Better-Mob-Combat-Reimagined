@@ -12,6 +12,8 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
+import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
+import cpw.mods.modlauncher.api.INameMappingService;
 
 import java.lang.reflect.Method;
 import java.util.Locale;
@@ -26,6 +28,9 @@ public final class ExternalAttackCompat {
     private static final Map<Class<?>, Boolean> CUSTOM_MELEE_OVERRIDE_CACHE = new ConcurrentHashMap<>();
     private static final Set<String> LOGGED_BRIDGES = ConcurrentHashMap.newKeySet();
     private static final int DEDUPE_TICKS = 10;
+    /** Mob#doHurtTarget under its runtime name: SRG in production, Mojang names in development. */
+    private static final String DO_HURT_TARGET_NAME =
+            ObfuscationReflectionHelper.remapName(INameMappingService.Domain.METHOD, "m_7327_");
 
     private ExternalAttackCompat() {
     }
@@ -37,7 +42,7 @@ public final class ExternalAttackCompat {
             // correctly recognized even when they bypass Mob#doHurtTarget.
             for (Class<?> cursor = type; cursor != null && Mob.class.isAssignableFrom(cursor); cursor = cursor.getSuperclass()) {
                 try {
-                    Method method = cursor.getDeclaredMethod("doHurtTarget", Entity.class);
+                    Method method = cursor.getDeclaredMethod(DO_HURT_TARGET_NAME, Entity.class);
                     Class<?> owner = method.getDeclaringClass();
                     return owner != Mob.class && !owner.getName().startsWith("net.minecraft.");
                 } catch (NoSuchMethodException ignored) {

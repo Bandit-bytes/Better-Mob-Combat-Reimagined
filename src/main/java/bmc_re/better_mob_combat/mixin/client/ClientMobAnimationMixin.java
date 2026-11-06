@@ -16,6 +16,7 @@ import dev.kosmx.playerAnim.impl.IAnimatedPlayer;
 import dev.kosmx.playerAnim.impl.animation.AnimationApplier;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationRegistry;
 import net.bettercombat.api.WeaponAttributes;
+import net.bettercombat.client.animation.AnimationRegistry;
 import net.bettercombat.client.animation.AttackAnimationSubStack;
 import net.bettercombat.client.animation.CustomAnimationPlayer;
 import net.bettercombat.client.animation.PoseSubStack;
@@ -416,25 +417,18 @@ public abstract class ClientMobAnimationMixin extends LivingEntity implements Mo
 
     @Unique
     private KeyframeAnimation bmc$getKeyframeAnimation(ResourceLocation id, String purpose) {
-        var playable = PlayerAnimationRegistry.getAnimation(id);
-        if (playable == null) {
+        // Better Combat 1.x (Minecraft 1.20.1) loads its attack and pose animations into its own
+        // registry, keyed by the "namespace:name" string, instead of Player Animator's registry.
+        KeyframeAnimation animation = AnimationRegistry.animations.get(id.toString());
+        if (animation == null) {
+            animation = PlayerAnimationRegistry.getAnimation(id);
+        }
+        if (animation == null) {
             if (BMC$MISSING_ANIMATIONS.add(id)) {
                 BetterMobCombatReimagined.LOGGER.warn(
                         "Player Animator could not find Better Combat mob {} animation '{}'",
                         purpose,
                         id
-                );
-            }
-            return null;
-        }
-
-        if (!(playable instanceof KeyframeAnimation animation)) {
-            if (BMC$MISSING_ANIMATIONS.add(id)) {
-                BetterMobCombatReimagined.LOGGER.warn(
-                        "Better Combat mob {} animation '{}' uses unsupported playable type '{}'",
-                        purpose,
-                        id,
-                        playable.getClass().getName()
                 );
             }
             return null;

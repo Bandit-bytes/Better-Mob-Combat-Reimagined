@@ -1044,7 +1044,7 @@ public final class OptionalEmfCompat {
         }
         StringBuilder builder = new StringBuilder();
         try {
-            java.lang.reflect.Field childrenField = ModelPart.class.getDeclaredField("children");
+            java.lang.reflect.Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             appendTree(root, (Map<String, ModelPart>) childrenField.get(root), childrenField, builder, 0);
         } catch (ReflectiveOperationException | RuntimeException exception) {
@@ -1126,7 +1126,7 @@ public final class OptionalEmfCompat {
             return "root";
         }
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<PartPathNode> queue = new ArrayDeque<>();
             queue.add(new PartPathNode(root, "root"));
@@ -1200,7 +1200,7 @@ public final class OptionalEmfCompat {
 
         List<ModelPart> matches = new ArrayList<>();
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
 
             ArrayDeque<ArmSearchNode> queue = new ArrayDeque<>();
@@ -1388,7 +1388,7 @@ public final class OptionalEmfCompat {
 
         Set<ModelPart> matches = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<ModelPart> queue = new ArrayDeque<>();
             queue.add(root);
@@ -1663,7 +1663,7 @@ public final class OptionalEmfCompat {
 
         Set<ModelPart> matches = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<ModelPart> queue = new ArrayDeque<>();
             queue.add(root);
@@ -1823,7 +1823,7 @@ public final class OptionalEmfCompat {
         }
 
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<ModelPart> queue = new ArrayDeque<>();
             queue.add(root);

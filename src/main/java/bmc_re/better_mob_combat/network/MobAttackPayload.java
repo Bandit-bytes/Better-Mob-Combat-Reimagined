@@ -1,11 +1,12 @@
 package bmc_re.better_mob_combat.network;
 
-import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.client.ClientPayloadHandler;
-import net.minecraft.network.RegistryFriendlyByteBuf;
-import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.DistExecutor;
+import net.minecraftforge.network.NetworkEvent;
+
+import java.util.function.Supplier;
 
 public record MobAttackPayload(
         int entityId,
@@ -15,12 +16,8 @@ public record MobAttackPayload(
         float length,
         float animationUpswing,
         float damageUpswing
-) implements CustomPacketPayload {
-    public static final Type<MobAttackPayload> TYPE = new Type<>(BetterMobCombatReimagined.id("mob_attack"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, MobAttackPayload> STREAM_CODEC =
-            StreamCodec.ofMember(MobAttackPayload::write, MobAttackPayload::decode);
-
-    private static MobAttackPayload decode(RegistryFriendlyByteBuf buffer) {
+) {
+    public static MobAttackPayload decode(FriendlyByteBuf buffer) {
         return new MobAttackPayload(
                 buffer.readVarInt(),
                 buffer.readUtf(256),
@@ -32,7 +29,7 @@ public record MobAttackPayload(
         );
     }
 
-    private void write(RegistryFriendlyByteBuf buffer) {
+    public void write(FriendlyByteBuf buffer) {
         buffer.writeVarInt(entityId);
         buffer.writeUtf(animationId, 256);
         buffer.writeBoolean(offHand);
@@ -42,12 +39,12 @@ public record MobAttackPayload(
         buffer.writeFloat(damageUpswing);
     }
 
-    public static void handle(MobAttackPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> ClientPayloadHandler.handleMobAttack(payload));
-    }
-
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
+    public static void handle(MobAttackPayload payload, Supplier<NetworkEvent.Context> contextSupplier) {
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(
+                Dist.CLIENT,
+                () -> () -> ClientPayloadHandler.handleMobAttack(payload)
+        ));
+        context.setPacketHandled(true);
     }
 }

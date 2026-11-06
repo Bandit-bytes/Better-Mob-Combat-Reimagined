@@ -359,7 +359,7 @@ public final class GenericHumanoidModelCompat {
         }
 
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<NamedPart> queue = new ArrayDeque<>();
             queue.add(new NamedPart("root", root));
@@ -434,7 +434,7 @@ public final class GenericHumanoidModelCompat {
         }
 
         try {
-            Field childrenField = ModelPart.class.getDeclaredField("children");
+            Field childrenField = ModelPartReflection.childrenField();
             childrenField.setAccessible(true);
             ArrayDeque<ModelPart> queue = new ArrayDeque<>();
             queue.add(root);

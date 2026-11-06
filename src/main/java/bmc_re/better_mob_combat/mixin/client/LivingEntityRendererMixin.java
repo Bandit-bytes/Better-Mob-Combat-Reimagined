@@ -32,7 +32,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
     private static final Set<String> BMC$RENDER_DIAGNOSTICS = new HashSet<>();
 
     /**
-     * DEBUG_LOGGING lives in the SERVER config, which NeoForge only loads inside a world.
+     * DEBUG_LOGGING lives in the SERVER config, which Forge only loads inside a world.
      * Entities rendered outside one (title screen, FancyMenu / Fancy Entity Renderer player
      * previews, other menus) would otherwise throw "Cannot get config value before config
      * is loaded". Outside a world, debug logging simply counts as off.
@@ -106,7 +106,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
     }
 
     @Inject(
-            method = "setupRotations(Lnet/minecraft/world/entity/LivingEntity;Lcom/mojang/blaze3d/vertex/PoseStack;FFFF)V",
+            method = "setupRotations(Lnet/minecraft/world/entity/LivingEntity;Lcom/mojang/blaze3d/vertex/PoseStack;FFF)V",
             at = @At("RETURN")
     )
     private void bmc$applyEmbeddedMobRootTransform(
@@ -115,7 +115,6 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             float ageInTicks,
             float bodyYaw,
             float partialTick,
-            float scale,
             CallbackInfo ci
     ) {
 
@@ -156,7 +155,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, M extend
             method = "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
             at = @At(
                     value = "INVOKE",
-                    target = "Lnet/minecraft/client/model/EntityModel;renderToBuffer(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;III)V",
+                    target = "Lnet/minecraft/client/model/EntityModel;renderToBuffer(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;IIFFFF)V",
                     shift = At.Shift.BEFORE
             )
     )

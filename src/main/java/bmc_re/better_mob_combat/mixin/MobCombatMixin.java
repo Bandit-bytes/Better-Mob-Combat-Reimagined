@@ -5,6 +5,7 @@ import bmc_re.better_mob_combat.logic.MobCombatLogic;
 import net.bettercombat.api.AttackHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
@@ -61,6 +62,18 @@ public abstract class MobCombatMixin extends LivingEntity implements MobCombatSt
         MobCombatLogic.playFallbackMeleeAnimation(mob);
     }
 
+
+    /**
+     * Minecraft 1.20.1 has no LivingEntity#getWeaponItem. Mob#doHurtTarget reads the main-hand slot
+     * for enchantment damage, knockback, fire aspect and shield disabling, so an off-hand Better
+     * Combat swing temporarily presents its weapon through that slot for the duration of the call.
+     */
+    @Inject(method = "getItemBySlot", at = @At("HEAD"), cancellable = true)
+    private void bmc$useSelectedAttackWeapon(EquipmentSlot slot, CallbackInfoReturnable<ItemStack> cir) {
+        if (slot == EquipmentSlot.MAINHAND && this.bmc$callingVanillaAttack && this.bmc$weaponOverride != null) {
+            cir.setReturnValue(this.bmc$weaponOverride);
+        }
+    }
 
     @Inject(method = "isWithinMeleeAttackRange", at = @At("RETURN"), cancellable = true)
     private void bmc$extendMeleeRange(LivingEntity target, CallbackInfoReturnable<Boolean> cir) {

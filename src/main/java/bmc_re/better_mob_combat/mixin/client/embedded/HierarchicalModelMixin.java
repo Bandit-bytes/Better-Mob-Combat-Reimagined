@@ -26,10 +26,13 @@ public abstract class HierarchicalModelMixin<T extends Entity> extends EntityMod
             VertexConsumer vertices,
             int packedLight,
             int packedOverlay,
-            int color,
+            float red,
+            float green,
+            float blue,
+            float alpha,
             CallbackInfo ci
     ) {
-        if (this.bmc$bendRenderToBuffer(poseStack, vertices, packedLight, packedOverlay, color)) {
+        if (this.bmc$bendRenderToBuffer(poseStack, vertices, packedLight, packedOverlay, red, green, blue, alpha)) {
             ci.cancel();
         }
     }
@@ -40,7 +43,10 @@ public abstract class HierarchicalModelMixin<T extends Entity> extends EntityMod
             VertexConsumer vertices,
             int packedLight,
             int packedOverlay,
-            int color
+            float red,
+            float green,
+            float blue,
+            float alpha
     ) {
         return false;
     }

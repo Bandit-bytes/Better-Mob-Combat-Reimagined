@@ -14,8 +14,8 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.item.TridentItem;
-import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
-import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+import net.minecraftforge.event.entity.EntityJoinLevelEvent;
+import net.minecraftforge.event.entity.living.LivingDamageEvent;
 
 public final class CommonEvents {
     private CommonEvents() {
@@ -54,7 +54,7 @@ public final class CommonEvents {
     }
 
 
-    public static void onLivingDamagePre(LivingDamageEvent.Pre event) {
+    public static void onLivingDamage(LivingDamageEvent event) {
         if (event.getEntity().level().isClientSide || !BMCConfig.ENABLED.get()) {
             return;
         }

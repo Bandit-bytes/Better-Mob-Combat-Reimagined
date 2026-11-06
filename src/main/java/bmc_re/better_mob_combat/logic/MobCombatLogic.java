@@ -5,10 +5,9 @@ import bmc_re.better_mob_combat.api.MobCombatState;
 import bmc_re.better_mob_combat.config.BMCConfig;
 import bmc_re.better_mob_combat.network.BMCNetwork;
 import bmc_re.better_mob_combat.mixin.LivingEntityAttackStrengthAccessor;
-import net.bettercombat.BetterCombatMod;
+import net.bettercombat.BetterCombat;
 import net.bettercombat.api.AttackHand;
 import net.bettercombat.api.WeaponAttributes;
-import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
@@ -17,7 +16,6 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.Brain;
-import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -36,11 +34,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.WeakHashMap;
 
 public final class MobCombatLogic {
-    private static final ResourceLocation DAMAGE_MODIFIER_ID = BetterMobCombatReimagined.id("attack_damage_multiplier");
-    private static final double DEFAULT_FALLBACK_ATTACK_REACH = Math.sqrt(2.04F) - 0.6F;
+    private static final UUID DAMAGE_MODIFIER_ID = UUID.fromString("5c0f4f43-6a8e-4c43-9a4f-4d2b8f7e2a61");
+    private static final String DAMAGE_MODIFIER_NAME = BetterMobCombatReimagined.MOD_ID + ":attack_damage_multiplier";
     private static final Set<String> ATTACK_DIAGNOSTICS = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Map<Mob, PendingFallbackAttack> PENDING_FALLBACK_ATTACKS = Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -130,26 +129,23 @@ public final class MobCombatLogic {
                 && !MobAttackSelector.hasCombatWeapon(mob);
     }
 
+    /**
+     * Minecraft 1.20.1 measures melee reach as the squared distance from the attacker's position to
+     * the target's position (see {@link Mob#getMeleeAttackRangeSqr(LivingEntity)}). The configured
+     * additional range is added to that radius, so a value of 0 keeps vanilla reach exactly.
+     */
     public static boolean isWithinFallbackRange(Mob mob, LivingEntity target) {
-        AABB attackBox;
-        Entity vehicle = mob.getVehicle();
-        if (vehicle != null) {
-            AABB vehicleBox = vehicle.getBoundingBox();
-            AABB mobBox = mob.getBoundingBox();
-            attackBox = new AABB(
-                    Math.min(mobBox.minX, vehicleBox.minX),
-                    mobBox.minY,
-                    Math.min(mobBox.minZ, vehicleBox.minZ),
-                    Math.max(mobBox.maxX, vehicleBox.maxX),
-                    mobBox.maxY,
-                    Math.max(mobBox.maxZ, vehicleBox.maxZ)
-            );
-        } else {
-            attackBox = mob.getBoundingBox();
-        }
+        return isWithinFallbackRange(mob, target, mob.getMeleeAttackRangeSqr(target),
+                mob.distanceToSqr(target.getX(), target.getY(), target.getZ()));
+    }
 
-        double reach = DEFAULT_FALLBACK_ATTACK_REACH + BMCConfig.ADDITIONAL_ATTACK_RANGE.get();
-        return attackBox.inflate(reach, 0.0D, reach).intersects(target.getHitbox());
+    public static boolean isWithinFallbackRange(Mob mob, LivingEntity target, double vanillaReachSqr, double distanceSqr) {
+        double additional = BMCConfig.ADDITIONAL_ATTACK_RANGE.get();
+        if (additional <= 0.0D) {
+            return distanceSqr <= vanillaReachSqr;
+        }
+        double reach = Math.sqrt(Math.max(0.0D, vanillaReachSqr)) + additional;
+        return distanceSqr <= reach * reach;
     }
 
     private static void playDelayedFallbackMeleeAnimation(Mob mob, ItemStack weaponSnapshot, int delay) {
@@ -181,7 +177,7 @@ public final class MobCombatLogic {
                 || !mob.isAlive()
                 || BMCConfig.isBlacklisted(mob.getType())
                 || mob.getMainHandItem().getItem() instanceof ProjectileWeaponItem
-                || !ItemStack.isSameItemSameComponents(mob.getMainHandItem(), pending.weaponSnapshot())) {
+                || !ItemStack.isSameItemSameTags(mob.getMainHandItem(), pending.weaponSnapshot())) {
             PENDING_FALLBACK_ATTACKS.remove(mob);
             return;
         }
@@ -276,7 +272,7 @@ public final class MobCombatLogic {
         }
 
         ItemStack currentStack = pending.isOffHand() ? mob.getOffhandItem() : mob.getMainHandItem();
-        if (!ItemStack.isSameItemSameComponents(currentStack, pending.itemStack()) || mob.isDeadOrDying()) {
+        if (!ItemStack.isSameItemSameTags(currentStack, pending.itemStack()) || mob.isDeadOrDying()) {
             cancelPending(state);
             return;
         }
@@ -458,8 +454,9 @@ public final class MobCombatLogic {
             if (multiplier != 1.0D) {
                 damage.addTransientModifier(new AttributeModifier(
                         DAMAGE_MODIFIER_ID,
+                        DAMAGE_MODIFIER_NAME,
                         multiplier - 1.0D,
-                        AttributeModifier.Operation.ADD_MULTIPLIED_BASE
+                        AttributeModifier.Operation.MULTIPLY_BASE
                 ));
             }
         }
@@ -472,7 +469,7 @@ public final class MobCombatLogic {
                 state.bmc$setWeaponOverride(hand.itemStack());
             }
             attackStrength.bmc$setAttackStrengthTicker(savedAttackStrengthTicker);
-            if (BetterCombatMod.getConfig() != null && BetterCombatMod.getConfig().allow_fast_attacks) {
+            if (BetterCombat.config != null && BetterCombat.config.allow_fast_attacks) {
                 target.invulnerableTime = 0;
             }
             state.bmc$setCallingVanillaAttack(true);
@@ -509,11 +506,11 @@ public final class MobCombatLogic {
 
     private record ModifierBinding(AttributeInstance instance, AttributeModifier modifier) {
         ModifierKey key() {
-            return new ModifierKey(this.instance, this.modifier.id());
+            return new ModifierKey(this.instance, this.modifier.getId());
         }
     }
 
-    private record ModifierKey(AttributeInstance instance, ResourceLocation id) {
+    private record ModifierKey(AttributeInstance instance, UUID id) {
     }
 
     private static final class AttributeModifierSwap {
@@ -559,8 +556,8 @@ public final class MobCombatLogic {
 
         private static List<ModifierBinding> collectRelevantMainHandModifiers(Mob mob, ItemStack stack) {
             List<ModifierBinding> bindings = new ArrayList<>();
-            stack.forEachModifier(EquipmentSlot.MAINHAND, (Holder<Attribute> attribute, AttributeModifier modifier) -> {
-                if (!attribute.is(Attributes.ATTACK_DAMAGE) && !attribute.is(Attributes.ATTACK_KNOCKBACK)) {
+            stack.getAttributeModifiers(EquipmentSlot.MAINHAND).forEach((attribute, modifier) -> {
+                if (attribute != Attributes.ATTACK_DAMAGE && attribute != Attributes.ATTACK_KNOCKBACK) {
                     return;
                 }
                 AttributeInstance instance = mob.getAttribute(attribute);

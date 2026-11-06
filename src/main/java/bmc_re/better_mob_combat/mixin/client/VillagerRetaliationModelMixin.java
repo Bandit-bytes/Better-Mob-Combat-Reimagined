@@ -14,12 +14,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(
         targets = "com.jvn.villagerretaliation.client.model.VillagerRetaliationVillagerModel",
-        priority = 500
+        priority = 500,
+        remap = false
 )
 public abstract class VillagerRetaliationModelMixin {
 
     @Inject(
-            method = "setupAnim(Lnet/minecraft/world/entity/npc/AbstractVillager;FFFFF)V",
+            // Third-party class: match both the development name and the production SRG name.
+            method = {
+                    "setupAnim(Lnet/minecraft/world/entity/npc/AbstractVillager;FFFFF)V",
+                    "m_6973_(Lnet/minecraft/world/entity/npc/AbstractVillager;FFFFF)V"
+            },
             at = @At("RETURN"),
             require = 0
     )

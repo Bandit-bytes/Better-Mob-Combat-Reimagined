@@ -1,23 +1,19 @@
 package bmc_re.better_mob_combat.network;
 
-import bmc_re.better_mob_combat.BetterMobCombatReimagined;
 import bmc_re.better_mob_combat.api.RangedWeaponKind;
 import bmc_re.better_mob_combat.client.ClientPayloadHandler;
-import net.minecraft.network.RegistryFriendlyByteBuf;
-import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.DistExecutor;
+import net.minecraftforge.network.NetworkEvent;
+
+import java.util.function.Supplier;
 
 public record MobRangedReleasePayload(
         int entityId,
         int weaponKind,
         boolean offHand
-) implements CustomPacketPayload {
-    public static final Type<MobRangedReleasePayload> TYPE =
-            new Type<>(BetterMobCombatReimagined.id("mob_ranged_release"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, MobRangedReleasePayload> STREAM_CODEC =
-            StreamCodec.ofMember(MobRangedReleasePayload::write, MobRangedReleasePayload::decode);
-
+) {
     public static MobRangedReleasePayload create(
             int entityId,
             RangedWeaponKind kind,
@@ -26,7 +22,7 @@ public record MobRangedReleasePayload(
         return new MobRangedReleasePayload(entityId, kind.ordinal(), offHand);
     }
 
-    private static MobRangedReleasePayload decode(RegistryFriendlyByteBuf buffer) {
+    public static MobRangedReleasePayload decode(FriendlyByteBuf buffer) {
         return new MobRangedReleasePayload(
                 buffer.readVarInt(),
                 buffer.readVarInt(),
@@ -34,18 +30,18 @@ public record MobRangedReleasePayload(
         );
     }
 
-    private void write(RegistryFriendlyByteBuf buffer) {
+    public void write(FriendlyByteBuf buffer) {
         buffer.writeVarInt(this.entityId);
         buffer.writeVarInt(this.weaponKind);
         buffer.writeBoolean(this.offHand);
     }
 
-    public static void handle(MobRangedReleasePayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> ClientPayloadHandler.handleMobRangedRelease(payload));
-    }
-
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
+    public static void handle(MobRangedReleasePayload payload, Supplier<NetworkEvent.Context> contextSupplier) {
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(
+                Dist.CLIENT,
+                () -> () -> ClientPayloadHandler.handleMobRangedRelease(payload)
+        ));
+        context.setPacketHandled(true);
     }
 }

@@ -98,7 +98,10 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             VertexConsumer vertices,
             int packedLight,
             int packedOverlay,
-            int color
+            float red,
+            float green,
+            float blue,
+            float alpha
     ) {
         // When EMF owns the model, it owns the render hierarchy even while its animations are paused.
         // This bend path
@@ -122,7 +125,10 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
                 vertices,
                 packedLight,
                 packedOverlay,
-                color,
+                red,
+                green,
+                blue,
+                alpha,
                 this.bmc$animation,
                 List.of(this.head),
                 List.of(

@@ -1,22 +1,67 @@
 plugins {
-    id 'java-library'
     id 'eclipse'
     id 'idea'
     id 'maven-publish'
-    id 'net.neoforged.gradle.userdev' version '7.1.38'
+    id 'net.minecraftforge.gradle' version '[6.0.24,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.+'
 }
 
-version = mod_version
+version = "${mod_version}+${minecraft_version}-forge"
 group = mod_group_id
 
 base {
     archivesName = mod_id
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file('runs/forge-1.20.1/' + it.name)
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        client {
+            property 'forge.enabledGameTestNamespaces', mod_id
+        }
+
+        server {
+            property 'forge.enabledGameTestNamespaces', mod_id
+            args '--nogui'
+        }
+
+        gameTestServer {
+            property 'forge.enabledGameTestNamespaces', mod_id
+        }
+
+        data {
+            args '--mod', mod_id, '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
+        }
+    }
+}
+
+mixin {
+    add sourceSets.main, "${mod_id}.refmap.json"
+    config "${mod_id}.mixins.json"
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
-    mavenLocal()
     maven {
         name = 'Modrinth'
         url = 'https://api.modrinth.com/maven'
@@ -27,50 +72,44 @@ repositories {
         url = 'https://maven.shedaniel.me/'
         content { includeGroup 'me.shedaniel.cloth' }
     }
-}
-
-runs {
-    configureEach {
-        systemProperty 'forge.logging.markers', 'REGISTRIES'
-        systemProperty 'forge.logging.console.level', 'debug'
-        modSource project.sourceSets.main
-    }
-
-    client {
-        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
-    }
-
-    server {
-        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
-        programArgument '--nogui'
-    }
-
-    gameTestServer {
-        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
-    }
-
-    data {
-        programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').absolutePath,
-                '--existing', file('src/main/resources/').absolutePath
+    maven {
+        name = 'KosmX'
+        url = 'https://maven.kosmx.dev/'
+        content { includeGroup 'dev.kosmx.player-anim' }
     }
 }
 
-sourceSets.main.resources { srcDir 'src/generated/resources' }
+jarJar.enable()
 
 dependencies {
-    implementation "net.neoforged:neoforge:${neo_version}"
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
-    implementation "maven.modrinth:5sy6g3kz:VhIOvcXP" // Better Combat 2.4.0+1.21.1-neoforge
-    implementation "maven.modrinth:gedNE4y2:HJZB6bmA" // playerAnimator 2.0.4+1.21.1-forge
-    implementation "me.shedaniel.cloth:cloth-config-neoforge:15.0.130"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:${mixin_extras_version}"))
+    implementation(jarJar("io.github.llamalad7:mixinextras-forge:${mixin_extras_version}")) {
+        jarJar.ranged(it, "[${mixin_extras_version},)")
+    }
+
+    implementation fg.deobf("maven.modrinth:better-combat:1.9.0+1.20.1-forge")
+    implementation fg.deobf("dev.kosmx.player-anim:player-animation-lib-forge:1.0.2-rc1+1.20")
+    implementation fg.deobf("me.shedaniel.cloth:cloth-config-forge:11.1.136")
+
+    // Optional: `gradlew runClient -PwithEmf` adds Entity Model Features to the dev client.
+    // Newer EMF Forge builds hard-code SRG names in their mixins and only run in production;
+    // 3.0.6 (our declared minimum) ships a refmap, so it can be remapped into the dev runtime.
+    if (project.hasProperty('withEmf')) {
+        runtimeOnly fg.deobf("maven.modrinth:entity-model-features:3.0.6-forge-1.20.1")
+        runtimeOnly fg.deobf("maven.modrinth:entitytexturefeatures:7.0.6-forge-1.20.1")
+    }
 }
 
-tasks.withType(ProcessResources).configureEach {
+tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
             minecraft_version      : minecraft_version,
             minecraft_version_range: minecraft_version_range,
-            neo_version            : neo_version,
-            neo_version_range      : neo_version_range,
+            forge_version          : forge_version,
+            forge_version_range    : forge_version_range,
             loader_version_range   : loader_version_range,
             mod_id                 : mod_id,
             mod_name               : mod_name,
@@ -81,10 +120,37 @@ tasks.withType(ProcessResources).configureEach {
     ]
     inputs.properties replaceProperties
 
-    filesMatching(['META-INF/neoforge.mods.toml']) {
-        expand replaceProperties
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties + [project: project]
     }
 }
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_authors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.jar.archiveVersion,
+                'Implementation-Vendor'   : mod_authors,
+                'MixinConfigs'            : "${mod_id}.mixins.json"
+        ])
+    }
+    finalizedBy 'reobfJar'
+}
+
+tasks.named('jarJar').configure {
+    archiveClassifier = ''
+}
+tasks.named('jar', Jar).configure {
+    archiveClassifier = 'slim'
+}
+reobf {
+    jarJar {}
+}
+tasks.named('jarJar').configure { finalizedBy 'reobfJarJar' }
+tasks.named('build').configure { dependsOn 'jarJar' }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
@@ -93,11 +159,11 @@ tasks.withType(JavaCompile).configureEach {
 publishing {
     publications {
         register('mavenJava', MavenPublication) {
-            from components.java
+            artifact jar
         }
     }
     repositories {
-        maven { url "file://${project.projectDir}/repo" }
+        maven { url "file://${project.projectDir}/mcmodsrepo" }
     }
 }
 
