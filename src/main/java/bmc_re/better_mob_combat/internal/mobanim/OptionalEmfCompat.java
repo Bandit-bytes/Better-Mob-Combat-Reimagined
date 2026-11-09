@@ -342,12 +342,19 @@ public final class OptionalEmfCompat {
         EmfRenderContext context = ACTIVE_EMF_RENDER.get();
         if (context == null
                 || context.applied
+                || context.appliedBeforeBaseModel
                 || context.entity != entity
                 || context.model != model) {
             return;
         }
 
-        context.applied = true;
+        // Do not mark the context as applied: EMF evaluates Fresh Animations inside
+        // renderToBuffer, after this point. Claiming the frame here made the post-EMF overlay
+        // skip, so FA's own pose won. Once a Vindicator stopped being aggressive mid-swing
+        // (target killed, goal reset), FA hid both individual arms for its crossed-arms pose
+        // while BMC had already hidden the crossed arms, and no arm rendered for the rest of
+        // the attack. The post-EMF hook must still run once after FA has animated.
+        context.appliedBeforeBaseModel = true;
         reapplyArms(entity, model);
     }
 
@@ -556,10 +563,7 @@ public final class OptionalEmfCompat {
                 new dev.kosmx.playerAnim.core.util.Vec3f(part.xRot, part.yRot, part.zRot)
         );
         part.setRotation(rotation.getX(), rotation.getY(), rotation.getZ());
-        dev.kosmx.playerAnim.impl.animation.IBendHelper.INSTANCE.bend(
-                part,
-                animation.getBend(channel)
-        );
+        EmbeddedPlayerAnimator.bendSafely(part, animation.getBend(channel));
     }
 
     private static void applyRotationWithoutBend(
@@ -835,7 +839,7 @@ public final class OptionalEmfCompat {
             boolean active
     ) {
         if (active && part != null) {
-            animation.updatePart(channel, part);
+            EmbeddedPlayerAnimator.updatePartSafely(animation, channel, part);
         }
     }
 
@@ -2096,7 +2100,10 @@ public final class OptionalEmfCompat {
         private final LivingEntity entity;
         private final EntityModel<?> model;
         private final EmfRenderContext previous;
+        /** Set once the overlay ran after EMF evaluated this render's animation. */
         private boolean applied;
+        /** Set once the pre-renderToBuffer safety net ran; does not replace the post-EMF pass. */
+        private boolean appliedBeforeBaseModel;
 
         private EmfRenderContext(
                 LivingEntity entity,

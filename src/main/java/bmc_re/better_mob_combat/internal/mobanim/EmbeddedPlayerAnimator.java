@@ -7,6 +7,8 @@ import com.mojang.math.Axis;
 import dev.kosmx.playerAnim.api.TransformType;
 import dev.kosmx.playerAnim.api.layered.IAnimation;
 import dev.kosmx.playerAnim.core.impl.AnimationProcessor;
+import dev.kosmx.playerAnim.core.util.MathHelper;
+import dev.kosmx.playerAnim.core.util.Pair;
 import dev.kosmx.playerAnim.core.util.SetableSupplier;
 import dev.kosmx.playerAnim.core.util.Vec3f;
 import dev.kosmx.playerAnim.impl.Helper;
@@ -28,6 +30,7 @@ import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 
 public final class EmbeddedPlayerAnimator {
@@ -265,13 +268,13 @@ public final class EmbeddedPlayerAnimator {
 
         if (!model.bmc$isFirstPersonNext() && animation.isActive()) {
             supplier.set(animation);
-            animation.updatePart("head", model.bmc$getHead());
+            updatePartSafely(animation, "head", model.bmc$getHead());
             model.bmc$getHat().copyFrom(model.bmc$getHead());
-            animation.updatePart("torso", model.bmc$getBody());
-            animation.updatePart("leftArm", model.bmc$getLeftArm());
-            animation.updatePart("rightArm", model.bmc$getRightArm());
-            animation.updatePart("leftLeg", model.bmc$getLeftLeg());
-            animation.updatePart("rightLeg", model.bmc$getRightLeg());
+            updatePartSafely(animation, "torso", model.bmc$getBody());
+            updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
+            updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
+            updatePartSafely(animation, "leftLeg", model.bmc$getLeftLeg());
+            updatePartSafely(animation, "rightLeg", model.bmc$getRightLeg());
         } else {
             model.bmc$setFirstPersonNext(false);
             supplier.set(null);
@@ -300,8 +303,8 @@ public final class EmbeddedPlayerAnimator {
 
         if (!model.bmc$isFirstPersonNext() && animation.isActive()) {
             supplier.set(animation);
-            animation.updatePart("leftArm", model.bmc$getLeftArm());
-            animation.updatePart("rightArm", model.bmc$getRightArm());
+            updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
+            updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
         } else {
             model.bmc$setFirstPersonNext(false);
             supplier.set(null);
@@ -333,20 +336,20 @@ public final class EmbeddedPlayerAnimator {
             // same ModelPart instances as this facade, so writing head/torso/leg keyframes here
             // would wipe FA's baby pose and leave a small adult. Only the weapon arms belong to
             // Better Combat; OptionalEmfCompat mirrors them into EMF's arm branches.
-            animation.updatePart("leftArm", model.bmc$getLeftArm());
-            animation.updatePart("rightArm", model.bmc$getRightArm());
+            updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
+            updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
             return;
         }
 
         // The normal model parts still receive the keyframes. OptionalEmfCompat mirrors these
         // channels into EMF's visible model tree immediately before it is rendered.
-        animation.updatePart("head", model.bmc$getHead());
+        updatePartSafely(animation, "head", model.bmc$getHead());
         model.bmc$getHat().copyFrom(model.bmc$getHead());
-        animation.updatePart("torso", model.bmc$getBody());
-        animation.updatePart("leftArm", model.bmc$getLeftArm());
-        animation.updatePart("rightArm", model.bmc$getRightArm());
-        animation.updatePart("leftLeg", model.bmc$getLeftLeg());
-        animation.updatePart("rightLeg", model.bmc$getRightLeg());
+        updatePartSafely(animation, "torso", model.bmc$getBody());
+        updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
+        updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
+        updatePartSafely(animation, "leftLeg", model.bmc$getLeftLeg());
+        updatePartSafely(animation, "rightLeg", model.bmc$getRightLeg());
     }
 
     public static void applyArmsOnlyToModel(
@@ -356,8 +359,73 @@ public final class EmbeddedPlayerAnimator {
         if (animation == null || !animation.isActive()) {
             return;
         }
-        animation.updatePart("leftArm", model.bmc$getLeftArm());
-        animation.updatePart("rightArm", model.bmc$getRightArm());
+        updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
+        updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
+    }
+
+    /**
+     * Parts whose first cuboid has no bendy-lib "bend" mutator. Identity-keyed (ModelPart does not
+     * override equals/hashCode) and weak, so EMF variant swaps and resource reloads never leak.
+     */
+    private static final Set<ModelPart> UNBENDABLE_PARTS = Collections.newSetFromMap(new WeakHashMap<>());
+
+    /**
+     * {@link AnimationApplier#updatePart} for parts this mod did not prepare with
+     * {@link IBendHelper#initBend}, such as EMF/Fresh Animations' visible model tree or custom
+     * modded models.
+     *
+     * <p>Player Animator bends through bendy-lib, whose cuboids return a null mutator unless
+     * {@code initBend} registered one, and Player Animator then calls {@code applyBend} on that
+     * null. A cuboid EMF or another mod built without that registration would make the resulting
+     * NullPointerException abort whichever overlay touched the part. {@code updatePart} writes
+     * position, rotation and scale before bending, so the first failure still leaves a correct
+     * pose; afterwards the part is driven without bending.</p>
+     */
+    public static void updatePartSafely(AnimationApplier animation, String channel, ModelPart part) {
+        if (UNBENDABLE_PARTS.contains(part)) {
+            updatePartWithoutBend(animation, channel, part);
+            return;
+        }
+        try {
+            animation.updatePart(channel, part);
+        } catch (NullPointerException exception) {
+            UNBENDABLE_PARTS.add(part);
+        }
+    }
+
+    /** {@link IBendHelper#bend(ModelPart, Pair)} that tolerates parts without a bend mutator. */
+    public static void bendSafely(ModelPart part, @Nullable Pair<Float, Float> bend) {
+        if (bend != null && UNBENDABLE_PARTS.contains(part)) {
+            return;
+        }
+        try {
+            IBendHelper.INSTANCE.bend(part, bend);
+        } catch (NullPointerException exception) {
+            UNBENDABLE_PARTS.add(part);
+        }
+    }
+
+    /** Mirrors Player Animator's {@code updatePart} without the bend step. */
+    private static void updatePartWithoutBend(AnimationApplier animation, String channel, ModelPart part) {
+        Vec3f position = animation.get3DTransform(channel, TransformType.POSITION, new Vec3f(part.x, part.y, part.z));
+        part.x = position.getX();
+        part.y = position.getY();
+        part.z = position.getZ();
+        Vec3f rotation = animation.get3DTransform(
+                channel,
+                TransformType.ROTATION,
+                new Vec3f(
+                        MathHelper.clampToRadian(part.xRot),
+                        MathHelper.clampToRadian(part.yRot),
+                        MathHelper.clampToRadian(part.zRot)
+                )
+        );
+        part.setRotation(rotation.getX(), rotation.getY(), rotation.getZ());
+        Vec3f scale = animation.get3DTransform(channel, TransformType.SCALE,
+                new Vec3f(part.xScale, part.yScale, part.zScale));
+        part.xScale = scale.getX();
+        part.yScale = scale.getY();
+        part.zScale = scale.getZ();
     }
 
     public static void applyAttackArmsOnly(
@@ -369,10 +437,10 @@ public final class EmbeddedPlayerAnimator {
             return;
         }
         if (animatedParts.contains(AnimatedPart.LEFT_ARM)) {
-            animation.updatePart("leftArm", model.bmc$getLeftArm());
+            updatePartSafely(animation, "leftArm", model.bmc$getLeftArm());
         }
         if (animatedParts.contains(AnimatedPart.RIGHT_ARM)) {
-            animation.updatePart("rightArm", model.bmc$getRightArm());
+            updatePartSafely(animation, "rightArm", model.bmc$getRightArm());
         }
     }
 

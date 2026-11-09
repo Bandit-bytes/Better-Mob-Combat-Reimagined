@@ -1,5 +1,6 @@
 package bmc_re.better_mob_combat.mixin.client.embedded;
 
+import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.internal.mobanim.EmbeddedPlayerAnimator;
 import bmc_re.better_mob_combat.internal.mobanim.FirstPersonTracker;
 import bmc_re.better_mob_combat.internal.mobanim.HumanoidBodyPose;
@@ -165,6 +166,12 @@ public abstract class IllagerModelMixin<T extends AbstractIllager> extends Hiera
             CallbackInfo ci
     ) {
         var animation = EmbeddedPlayerAnimator.getAnimation(entity);
+        // Sample the keyframes at this frame's partial tick. Without it, illager poses only advanced
+        // on whole ticks (20 Hz), which reads as a laggy swing next to humanoid mobs, and the EMF
+        // path below handed the held-item layer a pose from the previous tick.
+        if (animation != null && entity instanceof MobAnimationAccess access) {
+            animation.setTickDelta(access.bmc$getRenderPartialTick());
+        }
 
         if (entity instanceof Vindicator
                 && OptionalEmfCompat.isEmfModel((EntityModel<?>) (Object) this)) {
