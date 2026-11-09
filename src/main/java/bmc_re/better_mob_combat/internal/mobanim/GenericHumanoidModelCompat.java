@@ -157,12 +157,12 @@ public final class GenericHumanoidModelCompat {
         boolean applied = false;
 
         if (leftOwned && leftArm != null) {
-            animation.updatePart("leftArm", leftArm);
+            EmbeddedPlayerAnimator.updatePartSafely(animation, "leftArm", leftArm);
             leftArm.visible = true;
             applied = true;
         }
         if (rightOwned && rightArm != null) {
-            animation.updatePart("rightArm", rightArm);
+            EmbeddedPlayerAnimator.updatePartSafely(animation, "rightArm", rightArm);
             rightArm.visible = true;
             applied = true;
         }
@@ -261,7 +261,7 @@ public final class GenericHumanoidModelCompat {
 
     private static void apply(AnimationApplier animation, String channel, ModelPart part, boolean active) {
         if (active && part != null) {
-            animation.updatePart(channel, part);
+            EmbeddedPlayerAnimator.updatePartSafely(animation, channel, part);
         }
     }
 

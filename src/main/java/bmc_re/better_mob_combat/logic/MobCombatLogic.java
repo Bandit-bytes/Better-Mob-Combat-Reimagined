@@ -12,6 +12,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -333,6 +334,35 @@ public final class MobCombatLogic {
         return BMCConfig.ATTACK_START_DELAY.get()
                 + MobCombatMath.attackIntervalTicks(mob, hand)
                 + BMCConfig.ADDITIONAL_ATTACK_COOLDOWN.get();
+    }
+
+    /**
+     * Whether a melee goal that vanilla would stop should stay active because a Better Combat
+     * attack is mid-flight or the target is still inside weapon range.
+     */
+    public static boolean shouldKeepMeleeGoal(Mob mob) {
+        LivingEntity target = mob.getTarget();
+        if (target == null
+                || !target.isAlive()
+                || !EntitySelector.NO_CREATIVE_OR_SPECTATOR.test(target)
+                || !mob.isWithinRestriction(target.blockPosition())
+                || !isEligible(mob)) {
+            return false;
+        }
+        MobCombatState state = (MobCombatState) mob;
+        return state.bmc$getPendingAttack() != null
+                || state.bmc$getAttackCooldown() > 0
+                || isWithinWeaponRange(mob, target);
+    }
+
+    /** Whether a mob should stop pathing because its Better Combat attack is winding up in range. */
+    public static boolean shouldHoldPositionForAttack(Mob mob) {
+        AttackHand pending = ((MobCombatState) mob).bmc$getPendingAttack();
+        LivingEntity target = mob.getTarget();
+        return pending != null
+                && target != null
+                && target.isAlive()
+                && isWithinAttackStartRange(mob, target, pending);
     }
 
     public static boolean isWithinWeaponRange(Mob mob, LivingEntity target) {
