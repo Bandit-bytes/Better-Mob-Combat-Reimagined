@@ -376,11 +376,10 @@ public final class EmbeddedPlayerAnimator {
      *
      * <p>Player Animator 1.0.x (Minecraft 1.20.1) bends through bendy-lib, whose cuboids return a
      * null mutator unless {@code initBend} registered one, and Player Animator then calls
-     * {@code applyBend} on that null. The NullPointerException aborted every overlay that touched
-     * such a part. For Fresh Animations Vindicators that meant the left arm was rotated, the right
-     * arm never was, and FA's own idle swing showed through. {@code updatePart} writes position and
-     * rotation before bending, so the first failure still leaves a correct pose; afterwards the part
-     * is driven without bending.</p>
+     * {@code applyBend} on that null. A cuboid EMF or another mod built without that registration
+     * would make the resulting NullPointerException abort whichever overlay touched the part.
+     * {@code updatePart} writes position and rotation before bending, so the first failure still
+     * leaves a correct pose; afterwards the part is driven without bending.</p>
      */
     public static void updatePartSafely(AnimationApplier animation, String channel, ModelPart part) {
         if (UNBENDABLE_PARTS.contains(part)) {
