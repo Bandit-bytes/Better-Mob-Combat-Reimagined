@@ -1,0 +1,84 @@
+name: Bug report
+description: Something isn't working, crashes, or looks wrong.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill in as much as you can — it makes fixing it a lot faster.
+  - type: dropdown
+    id: version
+    attributes:
+      label: Minecraft version & loader
+      options:
+        - "1.21.1 NeoForge"
+        - "1.20.1 Forge"
+    validations:
+      required: true
+  - type: input
+    id: mod-version
+    attributes:
+      label: "Better Mob Combat: Reimagined version"
+      placeholder: "1.1.19"
+    validations:
+      required: true
+  - type: input
+    id: deps
+    attributes:
+      label: Better Combat & Player Animator versions
+      placeholder: "Better Combat 2.3.2, Player Animator 2.0.4"
+    validations:
+      required: true
+  - type: input
+    id: mobs
+    attributes:
+      label: Which mob(s)?
+      description: e.g. zombie, vindicator, drowned, or a modded mob (include the mod name).
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. A short video or screenshot helps a lot for animation issues.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Give a zombie a ...
+        2. Let it attack ...
+        3. See ...
+  - type: dropdown
+    id: visuals
+    attributes:
+      label: Model / animation mods
+      multiple: true
+      options:
+        - Fresh Animations
+        - Entity Model Features (EMF)
+        - Entity Texture Features (ETF)
+        - Other animation/model mods (list below)
+        - None
+  - type: textarea
+    id: logs
+    attributes:
+      label: Crash report / latest.log
+      description: Upload to https://mclo.gs or https://pastebin.com and paste the link. Please don't paste whole logs here.
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods / modpack
+      description: Modpack name and version, or other mods that change mobs, combat, or animations.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: "I'm using the latest version of Better Mob Combat: Reimagined for my Minecraft version."
+          required: true
+        - label: I searched existing issues and this hasn't been reported yet.
+          required: true
