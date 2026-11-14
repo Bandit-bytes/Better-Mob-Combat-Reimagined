@@ -131,6 +131,16 @@ public final class GeckoLibHumanoidBridge {
         copyOut(parts.rightLeg, rightLeg);
         copyOut(parts.leftLeg, leftLeg);
 
+        // GeckoLib's setters mark a bone as changed, and GeckoLib skips its rest-pose reset next
+        // frame for marked bones. Unmarked, every bone written here starts from its own pose again
+        // next frame. Left marked, the ranged overlay and the body channel, which add to the pose they
+        // find, would build on this frame's result and spin the torso round.
+        for (GeoBone bone : new GeoBone[]{head, torso, rightArm, leftArm, rightLeg, leftLeg, processor.getBone("body")}) {
+            if (bone != null) {
+                bone.resetStateChanges();
+            }
+        }
+
         logOnce("applied|" + entity.getType() + "|" + model.getClass().getName(),
                 "[BMC GeckoLib] Animating {} ({}) betterCombat={} ranged={}",
                 entity.getType(), model.getClass().getName(), playerAnimator, ranged);
@@ -170,8 +180,6 @@ public final class GeckoLibHumanoidBridge {
     }
 
     private static void copyOut(ModelPart part, GeoBone bone) {
-        // Deliberately not marking the bone as changed: GeckoLib would then skip its rest-pose reset
-        // next frame and keep this overlay after the animation ended.
         PartPose rest = part.getInitialPose();
         bone.setPosX(part.x - rest.x);
         bone.setPosY(rest.y - part.y);
