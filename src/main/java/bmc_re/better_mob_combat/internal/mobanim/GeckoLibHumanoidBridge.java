@@ -10,11 +10,11 @@ import com.mojang.math.Axis;
 import dev.kosmx.playerAnim.api.TransformType;
 import dev.kosmx.playerAnim.core.util.Vec3f;
 import dev.kosmx.playerAnim.impl.animation.AnimationApplier;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
-import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
+import net.minecraft.client.model.geom.builders.CubeDeformation;
+import net.minecraft.client.model.geom.builders.LayerDefinition;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.api.distmarker.Dist;
@@ -306,10 +306,15 @@ public final class GeckoLibHumanoidBridge {
         bone.setScaleZ(part.zScale);
     }
 
-    /** A plain player-shaped model, used only as a pose scratchpad and never rendered. */
+    /**
+     * A plain humanoid model, used only as a pose scratchpad and never rendered. It is baked from the
+     * vanilla mesh rather than through {@code EntityModelSet}, so Entity Model Features cannot swap in
+     * a resource pack's player model with different pivots or its own animations.
+     */
     private static HumanoidModel<LivingEntity> proxy() {
         if (proxy == null) {
-            proxy = new HumanoidModel<>(Minecraft.getInstance().getEntityModels().bakeLayer(ModelLayers.PLAYER));
+            proxy = new HumanoidModel<>(LayerDefinition.create(
+                    HumanoidModel.createMesh(CubeDeformation.NONE, 0.0F), 64, 64).bakeRoot());
         }
         return proxy;
     }
