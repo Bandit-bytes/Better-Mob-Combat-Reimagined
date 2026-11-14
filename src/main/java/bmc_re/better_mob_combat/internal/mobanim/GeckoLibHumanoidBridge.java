@@ -13,11 +13,13 @@ import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.animation.AnimationProcessor;
+import software.bernie.geckolib.animation.state.BoneSnapshot;
 import software.bernie.geckolib.cache.object.GeoBone;
 import software.bernie.geckolib.model.GeoModel;
 
@@ -36,6 +38,10 @@ import java.util.Set;
  * there by exactly the same code paths vanilla mobs use, and copied back. GeckoLib recomputes every
  * bone from its keyframes or rest pose on the next frame, so nothing written here persists.</p>
  *
+ * <p>One animation poses the skeleton per frame. During a Better Combat attack the limbs start from
+ * the vanilla humanoid pose instead of the bones, and the root, hand and item bones go back to rest.
+ * While the mob plays its own animation and no attack is running, nothing here touches it.</p>
+ *
  * <p>Bone/part conversion: GeckoLib renders without vanilla's {@code scale(-1, -1, 1)} flip, so a
  * vanilla part's X/Y rotations and Y offset are negated on the bone. Positions are bone offsets
  * from the rest pose, which is the vanilla part's initial pose.</p>
@@ -43,6 +49,10 @@ import java.util.Set;
 @OnlyIn(Dist.CLIENT)
 public final class GeckoLibHumanoidBridge {
     private static final Set<String> LOGGED = Collections.synchronizedSet(new HashSet<>());
+    private static final String RIGHT_HAND = "bipedHandRight";
+    private static final String LEFT_HAND = "bipedHandLeft";
+    /** Bones outside the six limbs that Iron's animations turn: the root, the hands and the item mounts. */
+    private static final String[] LOOSE_BONES = {"body", RIGHT_HAND, LEFT_HAND, "rightItem", "leftItem"};
 
     @Nullable
     private static HumanoidModel<LivingEntity> proxy;
@@ -60,13 +70,13 @@ public final class GeckoLibHumanoidBridge {
             return;
         }
 
+        Owner owner = owner(entity, access);
+        if (owner == Owner.MOB) {
+            return;
+        }
+        boolean attacking = owner == Owner.ATTACK;
         AnimationApplier animation = EmbeddedPlayerAnimator.getAnimation(entity);
-        boolean attacking = access.bmc$isAttackAnimationActive();
-        // Idle weapon poses yield to the mob's own spellcasting/melee animations; Better Combat
-        // attacks always win, since they are the attack that actually deals damage.
-        boolean posed = access.bmc$isArmAnimationActive()
-                && (attacking || !IronsSpellsCompat.isPlayingNativeAnimation(entity));
-        boolean playerAnimator = animation != null && posed;
+        boolean playerAnimator = animation != null && access.bmc$isArmAnimationActive();
         boolean ranged = RangedMobAnimator.hasRangedWork(entity);
         if (!playerAnimator && !ranged) {
             return;
@@ -88,12 +98,22 @@ public final class GeckoLibHumanoidBridge {
         }
 
         HumanoidModel<LivingEntity> parts = proxy();
-        copyIn(head, parts.head);
-        copyIn(torso, parts.body);
-        copyIn(rightArm, parts.rightArm);
-        copyIn(leftArm, parts.leftArm);
-        copyIn(rightLeg, parts.rightLeg);
-        copyIn(leftLeg, parts.leftLeg);
+        if (attacking) {
+            // The attack replaces the mob's own animation, as it does on vanilla mobs. Iron's melee
+            // moves also turn the root, hand and item bones, which would twist the body and the
+            // weapon away from the swing.
+            poseVanillaBase(parts, entity, partialTick);
+            for (String name : LOOSE_BONES) {
+                resetToRest(processor.getBone(name));
+            }
+        } else {
+            copyIn(head, parts.head);
+            copyIn(torso, parts.body);
+            copyIn(rightArm, parts.rightArm);
+            copyIn(leftArm, parts.leftArm);
+            copyIn(rightLeg, parts.rightLeg);
+            copyIn(leftLeg, parts.leftLeg);
+        }
         parts.hat.copyFrom(parts.head);
         parts.young = entity.isBaby();
         parts.riding = entity.isPassenger();
@@ -135,7 +155,11 @@ public final class GeckoLibHumanoidBridge {
         // frame for marked bones. Unmarked, every bone written here starts from its own pose again
         // next frame. Left marked, the ranged overlay and the body channel, which add to the pose they
         // find, would build on this frame's result and spin the torso round.
-        for (GeoBone bone : new GeoBone[]{head, torso, rightArm, leftArm, rightLeg, leftLeg, processor.getBone("body")}) {
+        for (GeoBone bone : new GeoBone[]{head, torso, rightArm, leftArm, rightLeg, leftLeg}) {
+            bone.resetStateChanges();
+        }
+        for (String name : LOOSE_BONES) {
+            GeoBone bone = processor.getBone(name);
             if (bone != null) {
                 bone.resetStateChanges();
             }
@@ -144,6 +168,64 @@ public final class GeckoLibHumanoidBridge {
         logOnce("applied|" + entity.getType() + "|" + model.getClass().getName(),
                 "[BMC GeckoLib] Animating {} ({}) betterCombat={} ranged={}",
                 entity.getType(), model.getClass().getName(), playerAnimator, ranged);
+    }
+
+    /** Who poses the skeleton this frame. Only one does, so two animations never mix. */
+    private enum Owner {
+        /** A Better Combat attack. It replaces the mob's own animation. */
+        ATTACK,
+        /** The mob's own GeckoLib animation: a spell, an Iron's melee move, a spawn. */
+        MOB,
+        /** Neither. Idle weapon poses and ranged motion go over the mob's procedural pose. */
+        OVERLAY
+    }
+
+    private static Owner owner(LivingEntity entity, MobAnimationAccess access) {
+        if (!BMCConfig.ENABLED.get() || BMCConfig.isBlacklisted(entity.getType())) {
+            return Owner.MOB;
+        }
+        if (access.bmc$isAttackAnimationActive()) {
+            return Owner.ATTACK;
+        }
+        return IronsSpellsCompat.isPlayingNativeAnimation(entity) ? Owner.MOB : Owner.OVERLAY;
+    }
+
+    /** The pose {@code HumanoidModel#setupAnim} gives a mob before any overlay: head look and walk cycle. */
+    private static void poseVanillaBase(HumanoidModel<LivingEntity> parts, LivingEntity entity, float partialTick) {
+        parts.head.resetPose();
+        parts.body.resetPose();
+        parts.rightArm.resetPose();
+        parts.leftArm.resetPose();
+        parts.rightLeg.resetPose();
+        parts.leftLeg.resetPose();
+
+        float bodyYaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
+        float headYaw = Mth.rotLerp(partialTick, entity.yHeadRotO, entity.yHeadRot);
+        parts.head.yRot = Mth.wrapDegrees(headYaw - bodyYaw) * Mth.DEG_TO_RAD;
+        parts.head.xRot = Mth.lerp(partialTick, entity.xRotO, entity.getXRot()) * Mth.DEG_TO_RAD;
+
+        float swing = entity.walkAnimation.position(partialTick);
+        float amount = Math.min(1.0F, entity.walkAnimation.speed(partialTick));
+        parts.rightArm.xRot = Mth.cos(swing * 0.6662F + Mth.PI) * amount;
+        parts.leftArm.xRot = Mth.cos(swing * 0.6662F) * amount;
+        parts.rightLeg.xRot = Mth.cos(swing * 0.6662F) * 1.4F * amount;
+        parts.leftLeg.xRot = Mth.cos(swing * 0.6662F + Mth.PI) * 1.4F * amount;
+    }
+
+    private static void resetToRest(@Nullable GeoBone bone) {
+        if (bone == null) {
+            return;
+        }
+        BoneSnapshot rest = bone.getInitialSnapshot();
+        bone.setRotX(rest.getRotX());
+        bone.setRotY(rest.getRotY());
+        bone.setRotZ(rest.getRotZ());
+        bone.setPosX(rest.getOffsetX());
+        bone.setPosY(rest.getOffsetY());
+        bone.setPosZ(rest.getOffsetZ());
+        bone.setScaleX(rest.getScaleX());
+        bone.setScaleY(rest.getScaleY());
+        bone.setScaleZ(rest.getScaleZ());
     }
 
     /**
