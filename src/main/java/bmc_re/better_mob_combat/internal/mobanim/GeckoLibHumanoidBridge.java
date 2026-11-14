@@ -5,6 +5,8 @@ import bmc_re.better_mob_combat.api.MobAnimationAccess;
 import bmc_re.better_mob_combat.client.RangedMobAnimator;
 import bmc_re.better_mob_combat.config.BMCConfig;
 import bmc_re.better_mob_combat.logic.IronsSpellsCompat;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import dev.kosmx.playerAnim.api.TransformType;
 import dev.kosmx.playerAnim.core.util.Vec3f;
 import dev.kosmx.playerAnim.impl.animation.AnimationApplier;
@@ -168,6 +170,36 @@ public final class GeckoLibHumanoidBridge {
         logOnce("applied|" + entity.getType() + "|" + model.getClass().getName(),
                 "[BMC GeckoLib] Animating {} ({}) betterCombat={} ranged={}",
                 entity.getType(), model.getClass().getName(), playerAnimator, ranged);
+    }
+
+    /**
+     * Applies the Better Combat item channel for a hand bone, as Player Animator does in the vanilla
+     * held-item layer. Called where GeckoLib is about to draw the item, after the mob's renderer has
+     * placed it in the hand. That frame faces the same way as vanilla's, so the transform carries over.
+     */
+    public static void applyHeldItem(PoseStack poseStack, String boneName, LivingEntity entity, float partialTick) {
+        String channel = RIGHT_HAND.equals(boneName) ? "rightItem" : LEFT_HAND.equals(boneName) ? "leftItem" : null;
+        // Only skeletons this class animates: other GeckoLib mobs use the same hand bone names.
+        if (channel == null || !(entity instanceof MobAnimationAccess access)
+                || !IronsSpellsCompat.isSpellCastingMob(entity) || owner(entity, access) == Owner.MOB) {
+            return;
+        }
+        AnimationApplier animation = EmbeddedPlayerAnimator.getAnimation(entity);
+        if (animation == null) {
+            return;
+        }
+        animation.setTickDelta(partialTick);
+        if (!animation.isActive()) {
+            return;
+        }
+        Vec3f scale = animation.get3DTransform(channel, TransformType.SCALE, new Vec3f(1.0F, 1.0F, 1.0F));
+        Vec3f rotation = animation.get3DTransform(channel, TransformType.ROTATION, Vec3f.ZERO);
+        Vec3f position = animation.get3DTransform(channel, TransformType.POSITION, Vec3f.ZERO).scale(1.0F / 16.0F);
+        poseStack.scale(scale.getX(), scale.getY(), scale.getZ());
+        poseStack.translate(position.getX(), position.getY(), position.getZ());
+        poseStack.mulPose(Axis.ZP.rotation(rotation.getZ()));
+        poseStack.mulPose(Axis.YP.rotation(rotation.getY()));
+        poseStack.mulPose(Axis.XP.rotation(rotation.getX()));
     }
 
     /** Who poses the skeleton this frame. Only one does, so two animations never mix. */
