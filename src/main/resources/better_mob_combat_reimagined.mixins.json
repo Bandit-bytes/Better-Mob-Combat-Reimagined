@@ -27,6 +27,7 @@
     "client.ClientMobAnimationMixin",
     "client.LivingEntityRendererMixin",
     "client.VillagerRetaliationModelMixin",
+    "client.IronsSpellCastingMobModelMixin",
     "client.DrownedOuterLayerMixin",
     "client.EMFModelPartWithStateMixin"
   ],

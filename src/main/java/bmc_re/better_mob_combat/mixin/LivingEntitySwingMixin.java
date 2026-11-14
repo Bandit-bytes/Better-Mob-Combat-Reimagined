@@ -1,6 +1,7 @@
 package bmc_re.better_mob_combat.mixin;
 
 import bmc_re.better_mob_combat.logic.ExternalAttackCompat;
+import bmc_re.better_mob_combat.logic.IronsSpellsCompat;
 import bmc_re.better_mob_combat.logic.MobCombatLogic;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
@@ -22,6 +23,12 @@ public abstract class LivingEntitySwingMixin {
         // mob can bypass that injection completely, so its visual bridge is allowed to claim the
         // swing even when its held item did not resolve through the normal eligibility check.
         boolean eligible = MobCombatLogic.isEligible(mob);
+        if (eligible && IronsSpellsCompat.isSpellCastingMob(mob) && mob.getTarget() != null) {
+            // Iron's melee goals swing when a move starts but only call doHurtTarget on the move's
+            // hit frames, so starting there would land the Better Combat swing a whole move late.
+            // Start it with the move instead; the later hit-frame calls are absorbed by beginAttack.
+            MobCombatLogic.beginAttack(mob, mob.getTarget());
+        }
         boolean externallyAnimated = ExternalAttackCompat.handleSwing(mob, hand);
         if (eligible || externallyAnimated) {
             ci.cancel();

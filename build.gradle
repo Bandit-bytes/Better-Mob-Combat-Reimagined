@@ -27,6 +27,11 @@ repositories {
         url = 'https://maven.shedaniel.me/'
         content { includeGroup 'me.shedaniel.cloth' }
     }
+    maven {
+        name = 'GeckoLib'
+        url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/'
+        content { includeGroup 'software.bernie.geckolib' }
+    }
 }
 
 runs {
@@ -63,6 +68,10 @@ dependencies {
     implementation "maven.modrinth:5sy6g3kz:VhIOvcXP" // Better Combat 2.4.0+1.21.1-neoforge
     implementation "maven.modrinth:gedNE4y2:HJZB6bmA" // playerAnimator 2.0.4+1.21.1-forge
     implementation "me.shedaniel.cloth:cloth-config-neoforge:15.0.130"
+
+    // Optional: only referenced from the Iron's Spells casting-mob bridge, which is skipped when
+    // Iron's Spells (and therefore GeckoLib) is not installed.
+    compileOnly "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:4.9.3"
 }
 
 tasks.withType(ProcessResources).configureEach {

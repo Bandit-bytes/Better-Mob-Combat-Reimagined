@@ -4,6 +4,7 @@ import bmc_re.better_mob_combat.api.RangedWeaponKind;
 import bmc_re.better_mob_combat.config.BMCConfig;
 import net.bettercombat.api.WeaponAttributes;
 import net.bettercombat.logic.WeaponRegistry;
+import net.minecraft.client.model.AnimationUtils;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.util.Mth;
@@ -59,6 +60,81 @@ public final class RangedMobAnimator {
         boolean rightArm = armForHand(entity, offHand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND)
                 == HumanoidArm.RIGHT;
         RELEASE_STATES.put(entity, new ReleaseState(kind, entity.tickCount, rightArm));
+    }
+
+    /** Whether {@link #apply} could change anything for this entity right now. */
+    public static boolean hasRangedWork(LivingEntity entity) {
+        return isAnimated(entity) && (findRangedWeapon(entity) != null || RELEASE_STATES.containsKey(entity));
+    }
+
+    /**
+     * Sets the arm pose and base aiming rotation vanilla's {@code HumanoidModel#setupAnim} would
+     * have produced. Needed for models that are only posed through a {@link HumanoidModel} proxy
+     * (GeckoLib casting mobs), since {@link #apply} adds its motion on top of that vanilla aim.
+     * Expects the proxy's head rotation to already hold the mob's look direction.
+     */
+    public static void poseVanillaRangedArms(LivingEntity entity, HumanoidModel<?> model) {
+        model.rightArmPose = HumanoidModel.ArmPose.EMPTY;
+        model.leftArmPose = HumanoidModel.ArmPose.EMPTY;
+        if (!isAnimated(entity)) {
+            return;
+        }
+
+        WeaponContext weapon = findRangedWeapon(entity);
+        if (weapon == null) {
+            return;
+        }
+
+        Item item = weapon.stack().getItem();
+        boolean using = entity.isUsingItem() && entity.getUsedItemHand() == weapon.hand();
+        HumanoidModel.ArmPose pose;
+        if (item instanceof CrossbowItem) {
+            if (using) {
+                pose = HumanoidModel.ArmPose.CROSSBOW_CHARGE;
+            } else if (CrossbowItem.isCharged(weapon.stack())) {
+                pose = HumanoidModel.ArmPose.CROSSBOW_HOLD;
+            } else {
+                return;
+            }
+        } else if (!using) {
+            return;
+        } else if (item instanceof TridentItem) {
+            pose = HumanoidModel.ArmPose.THROW_SPEAR;
+        } else {
+            pose = HumanoidModel.ArmPose.BOW_AND_ARROW;
+        }
+
+        boolean rightHanded = armForHand(entity, weapon.hand()) == HumanoidArm.RIGHT;
+        if (rightHanded) {
+            model.rightArmPose = pose;
+        } else {
+            model.leftArmPose = pose;
+        }
+
+        ModelPart head = model.head;
+        switch (pose) {
+            case BOW_AND_ARROW -> {
+                model.rightArm.yRot = -0.1F + head.yRot - (rightHanded ? 0.0F : 0.4F);
+                model.leftArm.yRot = 0.1F + head.yRot + (rightHanded ? 0.4F : 0.0F);
+                model.rightArm.xRot = -Mth.HALF_PI + head.xRot;
+                model.leftArm.xRot = -Mth.HALF_PI + head.xRot;
+                model.rightArm.zRot = 0.0F;
+                model.leftArm.zRot = 0.0F;
+            }
+            case CROSSBOW_CHARGE -> {
+                model.rightArm.zRot = 0.0F;
+                model.leftArm.zRot = 0.0F;
+                AnimationUtils.animateCrossbowCharge(model.rightArm, model.leftArm, entity, rightHanded);
+            }
+            case CROSSBOW_HOLD -> {
+                model.rightArm.zRot = 0.0F;
+                model.leftArm.zRot = 0.0F;
+                AnimationUtils.animateCrossbowHold(model.rightArm, model.leftArm, head, rightHanded);
+            }
+            default -> {
+                // THROW_SPEAR: apply() replaces the whole stance with its own javelin wind-up.
+            }
+        }
     }
 
     public static void apply(LivingEntity entity, HumanoidModel<?> model, float partialTick) {
