@@ -24,6 +24,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.phys.AABB;
@@ -450,7 +451,9 @@ public final class MobCombatLogic {
         List<LivingEntity> candidates = new ArrayList<>(mob.level().getEntitiesOfClass(
                 LivingEntity.class,
                 searchBox,
-                target -> validTarget(mob, target) && insideAttackShape(mob, target, hand.attack(), range)
+                target -> validTarget(mob, target)
+                        && !isFriendlyBystander(mob, target, intendedTarget)
+                        && insideAttackShape(mob, target, hand.attack(), range)
         ));
 
         candidates.sort(Comparator
@@ -465,10 +468,26 @@ public final class MobCombatLogic {
         if (target == mob || !target.isAlive() || target.isSpectator()) {
             return false;
         }
-        if (!BMCConfig.ALLOW_FRIENDLY_FIRE.get() && mob.isAlliedTo(target)) {
+        return !BMCConfig.REQUIRE_LINE_OF_SIGHT.get() || mob.hasLineOfSight(target);
+    }
+
+    /**
+     * Whether an entity caught in the attack arc is on the attacker's side and should be spared
+     * while friendly fire is disabled. {@link Entity#isAlliedTo} alone only covers scoreboard teams,
+     * so two ordinary zombies were never "allied" and every swing cut through the whole horde.
+     * Vanilla mobs only ever damage the entity they are attacking; hostile monsters never hurt each
+     * other, and mobs of one type never hurt each other. The entity the mob is actually attacking
+     * is always a legitimate target, exactly as with a vanilla attack.
+     */
+    private static boolean isFriendlyBystander(Mob mob, LivingEntity target, @Nullable Entity intendedTarget) {
+        if (BMCConfig.ALLOW_FRIENDLY_FIRE.get()
+                || target == intendedTarget
+                || target == mob.getTarget()) {
             return false;
         }
-        return !BMCConfig.REQUIRE_LINE_OF_SIGHT.get() || mob.hasLineOfSight(target);
+        return mob.isAlliedTo(target)
+                || (mob instanceof Enemy && target instanceof Enemy)
+                || mob.getType() == target.getType();
     }
 
     private static boolean insideAttackShape(Mob mob, LivingEntity target, WeaponAttributes.Attack attack, double range) {
