@@ -36,7 +36,8 @@ public final class BMCConfig {
             .define("requireLineOfSight", true);
 
     public static final ForgeConfigSpec.BooleanValue ALLOW_FRIENDLY_FIRE = SERVER_BUILDER
-            .comment("Allow a mob's attack arc to hit entities allied to that mob.")
+            .comment("Allow a mob's attack arc to hit entities on its side: teammates, other hostile monsters "
+                    + "when the attacker is hostile, and mobs of the same type. The mob's actual target is always hit.")
             .define("allowFriendlyFire", false);
 
     public static final ForgeConfigSpec.IntValue MAX_TARGETS = SERVER_BUILDER
