@@ -11,9 +11,20 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 
+/**
+ * Applies Better Combat's attack arms after Villager Retaliation has posed its villager models.
+ *
+ * <p>{@code HumanoidCompatVillagerModel} extends {@code VillagerRetaliationVillagerModel} and
+ * overrides {@code setupAnim}: it calls super (where the base-model hook runs), then its Fresh
+ * Animations profile re-poses the arms from Villager Retaliation's own pose provider. Targeting the
+ * subclass as well re-applies the attack arms after that, so they are not overwritten.</p>
+ */
 @Pseudo
 @Mixin(
-        targets = "com.jvn.villagerretaliation.client.model.VillagerRetaliationVillagerModel",
+        targets = {
+                "com.jvn.villagerretaliation.client.model.VillagerRetaliationVillagerModel",
+                "com.jvn.villagerretaliation.client.model.HumanoidCompatVillagerModel"
+        },
         priority = 500,
         remap = false
 )
